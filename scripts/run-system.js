@@ -16,10 +16,12 @@ export function parseSystemArgs(argv = []) {
     sweepLive: false,
     watch: true,
     // Auto-rebalance $ZOLANA between playing wallets so short accounts cross the 10k market gate and can
-    // sell pets. Opt-in (--rebalance). This keeps ZOLANA INSIDE the playing set (unlike sweep, which
-    // moves it OUT to a collection wallet — still refused above), so it doesn't violate "playing wallets
-    // retain ZOLANA". Only funds accounts that actually have something to sell (see rebalance-zolana.js).
-    rebalance: false,
+    // sell pets. Default-ON (2026-07-06, owner: a restart was coming back up WITHOUT the account-to-account
+    // transfer — they want it always on); `--no-rebalance` opts out. It keeps ZOLANA INSIDE the playing set
+    // (unlike sweep, which moves it OUT — still refused above), only funds accounts that actually have
+    // something to sell, and never drains a donor below its floor (see rebalance-zolana.js). It is a no-op
+    // whenever no wallet holds a surplus above the donor floor, so being on by default is harmless then.
+    rebalance: true,
     rebalanceMin: 20, // how often to re-check balances (minutes, ±20% jitter inside the script)
     extraBotArgs: [],
   };
@@ -31,6 +33,10 @@ export function parseSystemArgs(argv = []) {
     }
     if (arg === '--rebalance') {
       opts.rebalance = true;
+      continue;
+    }
+    if (arg === '--no-rebalance') {
+      opts.rebalance = false;
       continue;
     }
     if (arg.startsWith('--rebalance-min=')) {

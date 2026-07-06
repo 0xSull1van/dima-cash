@@ -165,21 +165,23 @@ npm run web                      # dashboard only
 ### Auto-rebalance (open the market on short accounts)
 
 The marketplace requires holding ≥ 10,000 $ZOLANA to list. Accounts below that gate can't sell their
-pets. `--rebalance` adds a background poller that moves **surplus** $ZOLANA (from wallets above the
-13.5k donor floor) to short accounts **that actually have something to sell** — no point funding an
-empty account. It keeps $ZOLANA *inside* the playing set (unlike a sweep, which pulls it out).
+pets. A background rebalancer moves **surplus** $ZOLANA (from wallets above the 13.5k donor floor) to
+short accounts **that actually have something to sell** — no point funding an empty account. It keeps
+$ZOLANA *inside* the playing set (unlike a sweep, which pulls it out). It is **on by default** in the
+supervisor (so a restart always includes it); pass `--no-rebalance` to disable.
 
 ```bash
-npm run system -- --rebalance                 # farm + dashboard + auto-rebalance (real transfers)
-npm run system -- --rebalance --rebalance-min=15   # re-check every ~15 min (±20% jitter)
+npm run system                                # farm + dashboard + auto-rebalance (real transfers, on by default)
+npm run system -- --rebalance-min=15          # re-check every ~15 min (±20% jitter)
+npm run system -- --no-rebalance              # disable the rebalancer
 npm run rebalance                             # one-off DRY-RUN: print the plan, send nothing
 npm run rebalance -- --execute --watch-min=20 # standalone poller (real transfers), no farm
 ```
 
 The planner never drains a donor below the floor, uses non-round amounts + human pauses, and only funds
 accounts with sellable pets or a Gold pile (`--no-gate` overrides). It needs `ZENKO_MASTER_KEY` set (same
-as the farm). If no wallet is above the donor floor yet, it stays idle and funds accounts automatically
-as sellers accumulate surplus.
+as the farm). It is a **no-op while no wallet holds a surplus above the donor floor** — so being on by
+default is harmless then, and it starts funding short accounts automatically once sellers accumulate surplus.
 
 ---
 

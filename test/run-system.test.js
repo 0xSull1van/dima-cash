@@ -25,25 +25,25 @@ test('parseSystemArgs defaults to full farm startup without live sweep', () => {
   assert.deepEqual(opts.extraBotArgs, ['--all', '--usd=1.3', '--execute']);
 });
 
-test('buildSystemProcesses starts dashboard and autopilot under --watch, never sweep by default', () => {
+test('buildSystemProcesses starts dashboard + autopilot + rebalance under --watch, never sweep by default', () => {
   const processes = buildSystemProcesses(parseSystemArgs(['--all', '--execute']));
 
-  assert.deepEqual(processes.map((p) => p.name), ['dashboard', 'autopilot']);
+  // 2026-07-06: the rebalancer is on by default now (owner request) — see the rebalance test above.
+  assert.deepEqual(processes.map((p) => p.name), ['dashboard', 'autopilot', 'rebalance']);
   assert.equal(processes[0].command, process.execPath);
-  // 2026-07-06: dashboard now also runs under --watch — it grew real server logic (Jupiter price
-  // poller for market-history.js), not just static-file serving (dashboard.html itself never needed
-  // a restart, served fresh per-request already; this is for serve-dashboard.js changes specifically).
+  // dashboard also runs under --watch — it grew real server logic (Jupiter price poller for
+  // market-history.js), not just static-file serving (dashboard.html is served fresh per-request).
   assert.deepEqual(processes[0].args, ['--watch', 'scripts/serve-dashboard.js']);
   assert.deepEqual(processes[1].args, ['--watch', 'scripts/run-autopilot.js', '--all', '--execute']);
   assert.equal(processes.some((p) => p.args.includes('scripts/sweep-funds.js')), false);
   assert.equal(JSON.stringify(processes).includes('--live'), false);
 });
 
-test('buildSystemProcesses can run players-only bot without dashboard', () => {
+test('buildSystemProcesses can run a players-only bot without dashboard (rebalance still on)', () => {
   const processes = buildSystemProcesses(parseSystemArgs(['--bot', '--players', '--no-dashboard']));
 
-  assert.deepEqual(processes.map((p) => p.name), ['bot']);
-  assert.deepEqual(processes[0].args, ['--watch', 'scripts/run-bot.js', '--players']);
+  assert.deepEqual(processes.map((p) => p.name), ['bot', 'rebalance']);
+  assert.deepEqual(processes.find((p) => p.name === 'bot').args, ['--watch', 'scripts/run-bot.js', '--players']);
 });
 
 test('--no-watch opts the farm process out of auto-restart', () => {
@@ -59,21 +59,24 @@ test('parseSystemArgs rejects live sweep because playing wallets retain ZOLANA',
   assert.throws(() => parseSystemArgs(['--sweep-live']), /not supported/i);
 });
 
-test('--rebalance adds an opt-in auto-rebalancer process; off by default', () => {
-  // default: no rebalance process
-  const off = buildSystemProcesses(parseSystemArgs(['--all']));
+test('auto-rebalancer is ON by default; --no-rebalance opts out; --rebalance-min sets the interval', () => {
+  // default-on (2026-07-06): a plain startup includes the account-to-account rebalancer
+  const onByDefault = buildSystemProcesses(parseSystemArgs(['--all']));
+  const reb = onByDefault.find((p) => p.name === 'rebalance');
+  assert.ok(reb, 'rebalance process present by default');
+  assert.deepEqual(reb.args, ['scripts/rebalance-zolana.js', '--execute', '--watch-min=20']);
+
+  // --no-rebalance disables it
+  const off = buildSystemProcesses(parseSystemArgs(['--all', '--no-rebalance']));
   assert.equal(off.some((p) => p.name === 'rebalance'), false);
   assert.equal(JSON.stringify(off).includes('rebalance-zolana.js'), false);
 
-  // opt-in: adds a rebalance child running --execute with the watch interval
-  const opts = parseSystemArgs(['--all', '--rebalance', '--rebalance-min=15']);
+  // interval override, and the flags must not leak into the farm script's own args
+  const opts = parseSystemArgs(['--all', '--rebalance-min=15']);
   assert.equal(opts.rebalance, true);
   assert.equal(opts.rebalanceMin, 15);
-  assert.equal(opts.extraBotArgs.includes('--rebalance'), false, '--rebalance must not leak into the farm script args');
+  assert.equal(opts.extraBotArgs.includes('--no-rebalance'), false);
   assert.equal(opts.extraBotArgs.includes('--rebalance-min=15'), false);
-
-  const processes = buildSystemProcesses(opts);
-  const reb = processes.find((p) => p.name === 'rebalance');
-  assert.ok(reb, 'rebalance process present when --rebalance passed');
-  assert.deepEqual(reb.args, ['scripts/rebalance-zolana.js', '--execute', '--watch-min=15']);
+  assert.deepEqual(buildSystemProcesses(opts).find((p) => p.name === 'rebalance').args,
+    ['scripts/rebalance-zolana.js', '--execute', '--watch-min=15']);
 });
