@@ -279,6 +279,17 @@ vtest('planListingReprice: на rarity-флоре больше НЕ репрай
   vassert.equal(plan, null, 'на демо-флоре стоп — ниже не сливаем');
 });
 
+// 2026-07-06 (owner "почему так дорого листим"): an already-listed $1.67 Uncommon (old outlier clearing)
+// is pulled straight to floor × cashoutMaxPriceOverFloor on reprice, not crawling −12%/hr for ~a day.
+vtest('planListingReprice: caps an absurdly-over-floor listing at floor × cashoutMaxPriceOverFloor', () => {
+  const listing = { id: 'L1', item_kind: 'creature', item_id: 'c1', status: 'active', currency: 'zenko', price_usd: 1.67, created_at: new Date(Date.now() - 2 * 3600e3).toISOString() };
+  const cfg = { cashoutRepriceMinAgeMs: 3600e3, cashoutRepriceMinDropPct: 0.05, cashoutMinPriceUsd: 0.01, cashoutRepriceDecayPct: 0.12, cashoutMaxPriceOverFloor: 10 };
+  // decay wants 1.67×0.88=$1.47, but the cap is $0.05×10=$0.50 → straight to $0.50
+  const plan = planListingReprice({ listing, floorUsd: 0.05, cfg });
+  vassert.ok(plan, 'over-priced lot older than 1h → plan exists');
+  vassert.equal(plan.newPriceUsd, 0.5, 'capped to floor $0.05 × 10, not decayed $1.47');
+});
+
 // ── Адаптивный темп 2026-07-06 (owner: «хаотично, как надо для темпа рынка, по последним продажам
 // и времени продаж»): скорость поглощения рынка → наш кулдаун листинга.
 import { salesVelocityPerHour, planListingPace } from '../src/marketplace.js';

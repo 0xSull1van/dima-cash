@@ -576,9 +576,13 @@ export function planListingReprice({ listing, floorUsd, now = Date.now(), cfg = 
   const uMin = Math.max(0, Number(cfg.cashoutUndercutPctMin) || 0);
   const uMax = Math.max(uMin, Number(cfg.cashoutUndercutPctMax) || 0);
   const undercutFactor = uMax > 0 ? 1 - (uMin + uMax) / 2 : 1;
-  const targetRaw = kind === 'gold' ? amount * floorUsd
+  let targetRaw = kind === 'gold' ? amount * floorUsd
     : decay > 0 ? Math.max(currentPriceUsd * (1 - decay), floorUsd)
     : floorUsd * undercutFactor;
+  // Same sanity cap as fresh listings (creatureIdealPriceUsd): a creature already listed absurdly high
+  // (an old outlier-clearing $1.67 Uncommon) is pulled straight down to floor × cashoutMaxPriceOverFloor on
+  // its next reprice, instead of only crawling down −12%/hr for ~a day. Gold is per-unit, not capped this way.
+  if (kind !== 'gold') targetRaw = Math.min(targetRaw, floorUsd * Math.max(1, Number(cfg.cashoutMaxPriceOverFloor) || 10));
   const newPriceUsd = usdCeilCents(targetRaw);
   const minPriceUsd = Math.max(0, Number(cfg.cashoutMinPriceUsd ?? 0.01) || 0);
   if (!(newPriceUsd >= minPriceUsd) || !(newPriceUsd < currentPriceUsd)) return null;
