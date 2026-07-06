@@ -1,0 +1,31 @@
+{
+  "name": "zenko-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser automation + wallet tooling for Zenko (zolana.gg)",
+  "scripts": {
+    "gen-wallet": "node scripts/generate-wallet.js",
+    "create-accounts": "node scripts/create-accounts.js",
+    "accounts": "node scripts/accounts.js",
+    "fund-stamina": "node scripts/fund-stamina.js",
+    "autopilot": "node scripts/run-autopilot.js",
+    "system": "node scripts/run-system.js",
+    "bootstrap": "node scripts/bootstrap.js",
+    "bot": "node scripts/run-bot.js",
+    "dashboard": "node scripts/dashboard.js",
+    "web": "node scripts/serve-dashboard.js",
+    "market-smoke": "node scripts/market-smoke.js",
+    "rebalance": "node scripts/rebalance-zolana.js"
+  },
+  "dependencies": {
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "tweetnacl": "^1.0.3",
+    "undici": "^6.27.0"
+  },
+  "overrides": {
+    "rpc-websockets": "9.2.0",
+    "uuid": "11.1.1"
+  }
+}

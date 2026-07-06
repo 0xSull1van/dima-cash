@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zenko · Farm</title>
+<!-- lightweight-charts v5 (addSeries(CandlestickSeries, …) API) — pin the major; an unversioned unpkg URL can silently jump to v6 -->
+<script src="https://unpkg.com/lightweight-charts@5/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+/* ===== palette (validated by scripts/validate_palette.js, surface #1f1811) =====
+   rarities: 5 chromatic slots PASS all 4 checks (worst adjacent CVD ΔE 12.0);
+   common — grey by game semantics (chroma-floor waiver): rarity is never encoded
+   by colour alone — every pill carries a letter C/U/R/E/L/M, every tab a name. */
+:root{
+  --bg:#16110c; --panel:#1f1811; --panel2:#251c13; --line:#3a2d1e;
+  --text:#e8dcc8; --muted:#a08a6c; --dim:#6b5a45; --accent:#f0a232;
+  --plus:#8fc98f; --minus:#d98d84;
+  --r-common:#988a75; --r-uncommon:#4e9a52; --r-rare:#2769b7;
+  --r-epic:#af79db; --r-legendary:#c8800d; --r-mythical:#b63b39;
+  --mono:"Cascadia Mono","JetBrains Mono",Consolas,ui-monospace,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--bg)}
+body{
+  font-family:var(--mono); color:var(--text); background:var(--bg);
+  font-size:13px; line-height:1.45; padding:20px 16px 48px;
+  font-variant-numeric:tabular-nums;
+}
+main{max-width:1260px;margin:0 auto}
+h2{
+  font-size:11px; letter-spacing:.18em; text-transform:uppercase;
+  color:var(--muted); font-weight:600; margin:0 0 10px;
+}
+.sec{margin-top:28px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px}
+
+/* ── header ── */
+.top{max-width:1260px;margin:0 auto 4px;display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.brand{font-size:13px;letter-spacing:.24em;color:var(--accent);font-weight:700}
+.topMeta{color:var(--dim);font-size:11px;display:flex;gap:14px}
+.topMeta b{color:var(--muted);font-weight:600}
+
+/* ── KPI ── */
+.kpiRow{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:14px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px 14px;min-width:0}
+.tile .lbl{font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);margin-bottom:6px}
+.tile .val{font-size:22px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .val .unit{font-size:12px;color:var(--muted);font-weight:600}
+.tile .sub{font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile .sub .ok{color:var(--plus)}
+
+/* ── chart controls ── */
+.controls{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.seg button{
+  background:none;border:0;color:var(--muted);font:inherit;font-size:11px;
+  padding:5px 10px;cursor:pointer;border-right:1px solid var(--line);
+}
+.seg button:last-child{border-right:0}
+.seg button:hover{color:var(--text);background:var(--panel2)}
+.seg button.on{background:var(--panel2);color:var(--accent);font-weight:700}
+.seg button .sw{display:inline-block;width:8px;height:8px;margin-right:5px;vertical-align:0}
+.chartHead{display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:8px;min-height:20px}
+.chartHead .cur{font-size:18px;font-weight:700}
+.chartHead .cur .unit{font-size:11px;color:var(--muted)}
+.chartHead .delta{font-size:13px;font-weight:600}
+.chartHead .ohlc{font-size:11px;color:var(--muted);margin-left:auto}
+.delta.up{color:var(--plus)} .delta.down{color:var(--minus)} .delta.flat{color:var(--muted)}
+#chartWrap{position:relative;height:400px}
+#chart{position:absolute;inset:0}
+#chartEmpty{
+  position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  color:var(--dim);font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+}
+#chartWrap.empty #chart{visibility:hidden}
+#chartWrap.empty #chartEmpty{display:flex}
+
+/* ── accounts ── */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.cardHead{padding:10px 12px;cursor:pointer;outline-offset:-2px}
+.cardHead:hover{background:var(--panel2)}
+.cardHead:focus-visible{outline:1px solid var(--accent)}
+.cardTop{display:flex;align-items:baseline;gap:8px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--plus);flex:none;align-self:center}
+.card.stale .dot{background:var(--minus)}
+.cardName{font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cardVal{text-align:right;white-space:nowrap}
+.cardVal b{font-size:14px}
+.cardVal .usd{color:var(--muted);font-size:11px;margin-left:6px}
+.cardMid{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px;flex-wrap:wrap}
+.cardMid .full{color:var(--accent);font-weight:700}
+.pills{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.pill{
+  display:inline-flex;align-items:center;gap:4px;font-size:10px;color:var(--muted);
+  background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:1px 6px 1px 4px;
+}
+.pill i{width:7px;height:7px;border-radius:2px;display:inline-block}
+.pill b{color:var(--text);font-weight:600}
+.cardBody{display:none;border-top:1px solid var(--line);background:var(--panel2);padding:10px 12px}
+.card.open .cardBody{display:block}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12px;padding:2px 0}
+.kv span:first-child{color:var(--muted)}
+.subhdr{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin:10px 0 4px}
+.pet{display:flex;align-items:center;gap:7px;font-size:12px;padding:2px 0;flex-wrap:wrap}
+.pet i{width:7px;height:7px;border-radius:2px;flex:none}
+.pet .sp{font-weight:600}
+.pet .meta{color:var(--muted);font-size:11px}
+.pet .fl{margin-left:auto;white-space:nowrap}
+.varb{color:var(--accent);font-size:10px;border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.miniLog{font-size:10px;color:var(--dim);white-space:pre-wrap;word-break:break-word;max-height:110px;overflow-y:auto}
+
+/* ── sales log ── */
+.salesNet{font-size:11px;color:var(--muted);letter-spacing:0;text-transform:none;margin-left:12px}
+.salesNet b{color:var(--plus)}
+table.sales{width:100%;border-collapse:collapse;font-size:12px}
+table.sales td,table.sales th{padding:5px 10px;text-align:left;border-top:1px solid var(--line);white-space:nowrap}
+table.sales th{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);border-top:0;font-weight:600}
+table.sales td.z{color:var(--plus);font-weight:600;text-align:right}
+table.sales td.u{color:var(--muted);text-align:right}
+table.sales td.t{color:var(--muted)}
+.tblWrap{overflow-x:auto}
+.emptyNote{color:var(--dim);font-size:12px;padding:8px 0}
+@media (max-width:520px){
+  body{padding:14px 8px 32px}
+  .tile .val{font-size:18px}
+  #chartWrap{height:320px}
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">ZENKO · FARM</div>
+  <div class="topMeta"><span>live <b id="liveCount">—</b></span><span>updated <b id="lastUpd">—</b></span></div>
+</header>
+<main>
+
+<!-- 1. KPI -->
+<section class="kpiRow" id="kpiRow" aria-label="Key metrics">
+  <div class="tile"><div class="lbl">Net from sales</div><div class="val" id="kNetZ">—</div><div class="sub" id="kNetSub">—</div></div>
+  <div class="tile"><div class="lbl">Fleet value</div><div class="val" id="kFleetZ">—</div><div class="sub" id="kFleetSub">—</div></div>
+  <div class="tile"><div class="lbl">ZOL price</div><div class="val" id="kRate">—</div><div class="sub">jupiter · independent</div></div>
+  <div class="tile"><div class="lbl">Pipeline 24h</div><div class="val" id="kConv">—</div><div class="sub" id="kConvSub">—</div></div>
+  <div class="tile"><div class="lbl">Incubation</div><div class="val" id="kInc">—</div><div class="sub" id="kIncSub">—</div></div>
+</section>
+
+<!-- 2. NFT floor · candles -->
+<section class="sec">
+  <h2>NFT floor · candles</h2>
+  <div class="panel">
+    <div class="controls" id="controls">
+      <div class="seg" id="segRarity" role="tablist" aria-label="Rarity"></div>
+      <div class="seg" id="segTf" aria-label="Timeframe"></div>
+      <div class="seg" id="segUnit" aria-label="Currency"></div>
+      <div class="seg" id="segWin" aria-label="Window"></div>
+    </div>
+    <div class="chartHead">
+      <span class="cur" id="floorCur">—</span>
+      <span class="delta flat" id="floorDelta"></span>
+      <span class="ohlc" id="ohlc"></span>
+    </div>
+    <div id="chartWrap"><div id="chart"></div><div id="chartEmpty">no sales in window</div></div>
+  </div>
+</section>
+
+<!-- 3. Accounts -->
+<section class="sec">
+  <h2>Accounts</h2>
+  <div class="grid" id="accGrid"></div>
+</section>
+
+<!-- 4. Sales log -->
+<section class="sec">
+  <h2 style="display:flex;align-items:baseline">Sales log<span class="salesNet" id="salesNet"></span></h2>
+  <div class="panel tblWrap">
+    <table class="sales">
+      <thead><tr><th>Time</th><th>Account</th><th>Item</th><th style="text-align:right">ZOL</th><th style="text-align:right">USD</th></tr></thead>
+      <tbody id="salesBody"></tbody>
+    </table>
+    <div class="emptyNote" id="salesEmpty" style="display:none">no sales yet</div>
+  </div>
+</section>
+
+</main>
+<script>
+'use strict';
+/* ============================== constants ============================== */
+const RARITIES = ['common','uncommon','rare','epic','legendary','mythical'];
+const RSHORT = { common:'C', uncommon:'U', rare:'R', epic:'E', legendary:'L', mythical:'M' };
+const RLABEL = { common:'Common', uncommon:'Uncommon', rare:'Rare', epic:'Epic', legendary:'Legendary', mythical:'Mythical' };
+const TFS = [ {m:5,label:'5m'}, {m:15,label:'15m'}, {m:60,label:'1h'} ];
+const WINS = [ {h:24,label:'24h'}, {h:72,label:'72h'} ];
+const UNITS = [ {u:'zol',label:'ZOL'}, {u:'usd',label:'USD'} ];
+const LIVE_MS = 10*60*1000;          // live account: hasLive && fresher than 10 minutes
+const VALUE_HAIRCUT = 0.70;          // conservative liquidation haircut for fleet mark-to-market: floor value is optimistic, you never realize 100% dumping the whole book into thin demand
+const INCUBATOR_CAP = 6;             // incubation slots per account (pending cap raised 3→6, 07-06)
+const STATE_POLL_MS = 15000, MARKET_POLL_MS = 60000;
+
+/* ============================== formatting ============================== */
+// en-US thousands separators everywhere; ZOL as integers, $ two decimals (price — 6)
+const nfInt = new Intl.NumberFormat('en-US', { maximumFractionDigits:0 });
+const nf2   = new Intl.NumberFormat('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+const fmtZ  = v => nfInt.format(Math.round(v));
+const fmtUsd = v => '$' + nf2.format(v);
+const fmtUsdSmart = v => v >= 1 ? '$'+nf2.format(v) : '$'+Number(v).toFixed(4); // USD floors can be < $1
+const fmtHM = ts => new Date(ts).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' });
+const fmtVal = (v, unit) => unit==='usd' ? fmtUsdSmart(v) : fmtZ(v);
+
+/* ============================== DOM helpers ============================== */
+const $ = id => document.getElementById(id);
+// textContent only — account/species/log names come from the API; never concatenate them into markup
+function el(tag, cls, text){ const n=document.createElement(tag); if(cls)n.className=cls; if(text!=null)n.textContent=text; return n; }
+
+/* ============================== state ============================== */
+const ui = { rarity:'common', tf:15, unit:'zol', win:24 };
+let stateData = null;      // /api/state
+let marketData = null;     // /api/market-history (raw rows for the current window)
+const openCards = new Set();
+
+/* ============================== segment controls ============================== */
+function buildSeg(node, items, isOn, onPick, renderBtn){
+  node.textContent = '';
+  for(const it of items){
+    const b = document.createElement('button');
+    b.type = 'button';
+    if(renderBtn) renderBtn(b, it); else b.textContent = it.label;
+    if(isOn(it)) b.classList.add('on');
+    b.addEventListener('click', () => onPick(it));
+    node.appendChild(b);
+  }
+}
+function renderControls(){
+  buildSeg($('segRarity'), RARITIES.map(r=>({r})), it=>it.r===ui.rarity,
+    it=>{ ui.rarity=it.r; renderChart(); },   // switch rarity WITHOUT re-fetching
+    (b,it)=>{ const sw=el('i','sw'); sw.style.background=`var(--r-${it.r})`; b.appendChild(sw); b.appendChild(document.createTextNode(RLABEL[it.r])); b.setAttribute('role','tab'); });
+  buildSeg($('segTf'), TFS, it=>it.m===ui.tf, it=>{ ui.tf=it.m; renderChart(); });
+  buildSeg($('segUnit'), UNITS, it=>it.u===ui.unit, it=>{ ui.unit=it.u; renderChart(); });
+  buildSeg($('segWin'), WINS, it=>it.h===ui.win, it=>{ ui.win=it.h; fetchMarket(); }); // different window = different hours → re-fetch
+}
+
+/* ============================== chart ============================== */
+let chart=null, candleSeries=null, volSeries=null, candleByTime=new Map();
+const TZ_SHIFT_S = -new Date().getTimezoneOffset()*60; // lightweight-charts draws UTC → shift into the browser's local time
+const toChartTime = ms => Math.floor(ms/1000) + TZ_SHIFT_S;
+
+function initChart(){
+  const LWC = window.LightweightCharts;
+  if(!LWC){ $('chartWrap').classList.add('empty'); $('chartEmpty').textContent='lightweight-charts failed to load (CDN)'; return; }
+  chart = LWC.createChart($('chart'), {
+    autoSize: true,
+    layout: { background:{ type:'solid', color:'#1f1811' }, textColor:'#a08a6c',
+              fontFamily:getComputedStyle(document.body).fontFamily, fontSize:11, attributionLogo:false },
+    grid: { vertLines:{ color:'#2a2015' }, horzLines:{ color:'#2a2015' } },
+    rightPriceScale: { borderColor:'#3a2d1e' },
+    timeScale: { borderColor:'#3a2d1e', timeVisible:true, secondsVisible:false },
+    crosshair: { mode: LWC.CrosshairMode.Normal },
+  });
+  candleSeries = chart.addSeries(LWC.CandlestickSeries, {
+    upColor:'#8fc98f', downColor:'#d98d84', wickUpColor:'#8fc98f', wickDownColor:'#d98d84',
+    borderVisible:false,
+    priceFormat:{ type:'custom', minMove:0.000001, formatter: v => fmtVal(v, ui.unit) },
+    // floor price is never negative — without the clamp the lower scale margin (scaleMargins.bottom
+    // reserved for the volume band) would draw $-0.10/-0.20 ticks when low≈0
+    autoscaleInfoProvider: orig => { const r=orig(); if(r&&r.priceRange&&r.priceRange.minValue<0) r.priceRange.minValue=0; return r; },
+  });
+  volSeries = chart.addSeries(LWC.HistogramSeries, {
+    priceScaleId:'vol', color:'#6b5a45', priceFormat:{ type:'volume' }, lastValueVisible:false, priceLineVisible:false,
+  });
+  chart.priceScale('vol').applyOptions({ scaleMargins:{ top:0.82, bottom:0 } });
+  candleSeries.priceScale().applyOptions({ scaleMargins:{ top:0.06, bottom:0.24 } });
+  chart.subscribeCrosshairMove(param => {
+    const c = param && param.time != null ? candleByTime.get(param.time) : null;
+    renderOhlc(c || lastCandle());
+  });
+}
+function lastCandle(){ const a=[...candleByTime.values()]; return a.length?a[a.length-1]:null; }
+function renderOhlc(c){
+  $('ohlc').textContent = c
+    ? `O ${fmtVal(c.open,ui.unit)}  H ${fmtVal(c.high,ui.unit)}  L ${fmtVal(c.low,ui.unit)}  C ${fmtVal(c.close,ui.unit)} · V ${c.vol} · ${fmtHM(c.ms)}`
+    : '';
+}
+
+// nearest jupiter price by time — ZOL→USD conversion always goes through prices, never the in-game rate
+function nearestPrice(prices, ts){
+  if(!prices || !prices.length) return null;
+  let lo=0, hi=prices.length-1;
+  while(hi-lo>1){ const mid=(lo+hi)>>1; if(prices[mid].ts<=ts) lo=mid; else hi=mid; }
+  const a=prices[lo], b=prices[hi];
+  const best = Math.abs(a.ts-ts)<=Math.abs(b.ts-ts) ? a : b;
+  return best.usdPrice>0 ? best.usdPrice : null;
+}
+
+// candles from raw points: a bucket exists only where there are valid points (floor>0);
+// empty intervals are skipped — no zero/flat candles
+function buildCandles(){
+  const rows = (marketData?.floors || []).filter(f =>
+    f.rarity===ui.rarity && Number.isFinite(f.floorZolana) && f.floorZolana>0);
+  const prices = marketData?.prices || [];
+  const tfMs = ui.tf*60000;
+  const buckets = new Map();
+  const valid = []; // valid window points in order — for the delta
+  for(const r of rows){
+    let v = r.floorZolana;
+    if(ui.unit==='usd'){ const p=nearestPrice(prices, r.ts); if(p==null) continue; v=v*p; }
+    valid.push({ ts:r.ts, v });
+    const bt = Math.floor(r.ts/tfMs)*tfMs;
+    let b = buckets.get(bt);
+    if(!b){ b={ ms:bt, open:v, high:v, low:v, close:v, vol:0, _f:r.ts, _l:r.ts }; buckets.set(bt,b); }
+    else {
+      if(r.ts<b._f){ b.open=v; b._f=r.ts; }
+      if(r.ts>=b._l){ b.close=v; b._l=r.ts; }
+      b.high=Math.max(b.high,v); b.low=Math.min(b.low,v);
+    }
+    // saleCount in a snapshot is the level of recent sales; take max, not sum (adjacent snapshots see the same sales)
+    b.vol = Math.max(b.vol, Number(r.saleCount)||0);
+  }
+  return { candles:[...buckets.values()].sort((a,b)=>a.ms-b.ms), valid };
+}
+
+function renderChart(){
+  renderControls();
+  if(!chart) return;
+  const { candles, valid } = buildCandles();
+  candleByTime = new Map();
+  const wrap = $('chartWrap');
+  if(!candles.length){
+    wrap.classList.add('empty');
+    candleSeries.setData([]); volSeries.setData([]);
+    $('floorCur').textContent = `${RLABEL[ui.rarity]}: no sales in window`;
+    $('floorDelta').textContent=''; $('ohlc').textContent='';
+    return;
+  }
+  wrap.classList.remove('empty');
+  const cd=[], vd=[];
+  for(const c of candles){
+    const t = toChartTime(c.ms);
+    candleByTime.set(t, c);
+    cd.push({ time:t, open:c.open, high:c.high, low:c.low, close:c.close });
+    vd.push({ time:t, value:c.vol });
+  }
+  candleSeries.setData(cd); volSeries.setData(vd);
+  chart.timeScale().fitContent();
+  // current floor + Δ from the first VALID point in the window
+  const first = valid[0].v, cur = valid[valid.length-1].v;
+  const d = cur-first, pct = first>0 ? d/first*100 : 0;
+  const curNode = $('floorCur'); curNode.textContent='';
+  curNode.appendChild(document.createTextNode(`${RLABEL[ui.rarity]} ${fmtVal(cur, ui.unit)} `));
+  curNode.appendChild(el('span','unit', ui.unit==='usd'?'USD':'ZOL'));
+  const dn = $('floorDelta');
+  dn.className = 'delta ' + (d>0?'up':d<0?'down':'flat');
+  dn.textContent = `${d>=0?'+':'−'}${fmtVal(Math.abs(d), ui.unit)} (${d>=0?'+':''}${pct.toFixed(1)}%) over ${ui.win}h`;
+  renderOhlc(lastCandle());
+}
+
+/* ============================== KPI ============================== */
+// merged floor across the fleet: freshest value of each rarity from accounts' creatureFloorZolana
+function mergedFloors(accounts){
+  const best={}, bestTs={};
+  for(const a of accounts){
+    if(!a.creatureFloorZolana) continue;
+    const ts=a.ts||0;
+    for(const [r,v] of Object.entries(a.creatureFloorZolana)){
+      if(!(v>0)) continue;
+      if(!(bestTs[r]>ts)){ best[r]=v; bestTs[r]=ts; }
+    }
+  }
+  return best;
+}
+// account value in ZOL: pets×floor×0.70 + gold→USD→ZOL×0.70 (haircut — liquidation into the book)
+function accountValueZol(a, floors, jup, goldFloorUsd){
+  let pets=0;
+  for(const c of (a.creaturesList||[])){
+    const f = floors[String(c.rarity||'').toLowerCase()];
+    if(f>0) pets += f*VALUE_HAIRCUT;
+  }
+  let goldZol=0;
+  const gold=a.player?.gold||0;
+  if(jup>0 && goldFloorUsd>0) goldZol = gold*goldFloorUsd*VALUE_HAIRCUT/jup;
+  return pets+goldZol;
+}
+const isLive = a => !!a.hasLive && (Date.now()-(a.ts||0)) < LIVE_MS;
+const activeRuns = a => (a.dungeonRuns||[]).filter(r=>r.status==='active'||r.status==='pending').length;
+
+function renderKpis(s){
+  const jup = s.jupiterPriceUsd||0;
+  const sales = s.sales||{count:0,netZolana:0,netUsd:0,log:[]};
+  setValUnit('kNetZ', fmtZ(sales.netZolana), 'ZOL');
+  $('kNetSub').textContent = `${fmtUsd(sales.netUsd)} · sales: ${sales.count}`;
+
+  const floors = mergedFloors(s.accounts||[]);
+  let fleet=0;
+  for(const a of s.accounts||[]) fleet += accountValueZol(a, floors, jup, s.goldFloorUsd||0);
+  setValUnit('kFleetZ', fmtZ(fleet), 'ZOL');
+  $('kFleetSub').textContent = `${fmtUsd(fleet*jup)} · haircut ×${VALUE_HAIRCUT}`;
+
+  $('kRate').textContent = jup>0 ? '$'+jup.toFixed(6) : '—';
+
+  const fl = s.strategyFlows24h||{};
+  setValUnit('kConv', nfInt.format(fl.breed?.count||0), 'breeds');
+  $('kConvSub').textContent = `hatches: ${nfInt.format(fl.egg_hatch?.count||0)}`;
+
+  const accs=(s.accounts||[]).filter(a=>a.hasLive);
+  const incub = accs.reduce((n,a)=>n+(a.counts?.pendingEggs||0),0);
+  const full = accs.filter(a=>(a.counts?.pendingEggs||0)>=INCUBATOR_CAP).length;
+  setValUnit('kInc', nfInt.format(incub), 'eggs');
+  const sub=$('kIncSub'); sub.textContent='';
+  const fullSpan = el('span', full===accs.length&&accs.length?'ok':'', `full: ${full}/${accs.length}`);
+  sub.appendChild(fullSpan);
+}
+function setValUnit(id, val, unit){
+  const n=$(id); n.textContent='';
+  n.appendChild(document.createTextNode(val+' '));
+  n.appendChild(el('span','unit',unit));
+}
+
+/* ============================== accounts ============================== */
+function rarityCounts(a){
+  const counts={};
+  for(const c of (a.creaturesList||[])){
+    const r=String(c.rarity||'').toLowerCase();
+    if(RSHORT[r]) counts[r]=(counts[r]||0)+1;
+  }
+  return counts;
+}
+function renderAccounts(s){
+  const grid=$('accGrid'); grid.textContent='';
+  const jup=s.jupiterPriceUsd||0, floors=mergedFloors(s.accounts||[]);
+  for(const a of s.accounts||[]){
+    const live=isLive(a);
+    const card=el('div','card'+(live?'':' stale')+(openCards.has(a.name)?' open':''));
+
+    const head=el('div','cardHead');
+    head.setAttribute('role','button'); head.tabIndex=0;
+    head.setAttribute('aria-expanded', openCards.has(a.name)?'true':'false');
+    const top=el('div','cardTop');
+    const dot=el('span','dot'); dot.title=live?'live':'no fresh data >10 min';
+    top.appendChild(dot);
+    top.appendChild(el('span','cardName',a.name||'?'));
+    const zol=accountValueZol(a,floors,jup,s.goldFloorUsd||0);
+    const val=el('span','cardVal');
+    const b=el('b',null,fmtZ(zol)+' Z'); val.appendChild(b);
+    val.appendChild(el('span','usd',fmtUsd(zol*jup)));
+    top.appendChild(val);
+    head.appendChild(top);
+
+    const mid=el('div','cardMid');
+    const pend=a.counts?.pendingEggs||0;
+    mid.appendChild(el('span', pend>=INCUBATOR_CAP?'full':'', `incubating ${pend}/${INCUBATOR_CAP}`));
+    mid.appendChild(el('span',null,`in raids ${activeRuns(a)}`));
+    head.appendChild(mid);
+
+    const pills=el('div','pills');
+    const rc=rarityCounts(a);
+    for(const r of RARITIES){
+      if(!rc[r]) continue;
+      const p=el('span','pill');
+      const i=el('i'); i.style.background=`var(--r-${r})`; p.appendChild(i);
+      p.appendChild(document.createTextNode(RSHORT[r]+'·'));
+      p.appendChild(el('b',null,String(rc[r])));
+      p.title=RLABEL[r];
+      pills.appendChild(p);
+    }
+    head.appendChild(pills);
+    card.appendChild(head);
+
+    const body=el('div','cardBody');
+    if(openCards.has(a.name)) fillCardBody(body,a,floors,jup);
+    card.appendChild(body);
+
+    const toggle=()=>{
+      if(openCards.has(a.name)) openCards.delete(a.name); else openCards.add(a.name);
+      card.classList.toggle('open');
+      head.setAttribute('aria-expanded', card.classList.contains('open')?'true':'false');
+      if(card.classList.contains('open')){ body.textContent=''; fillCardBody(body,a,floors,jup); }
+    };
+    head.addEventListener('click',toggle);
+    head.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggle(); } });
+    grid.appendChild(card);
+  }
+}
+function fillCardBody(body,a,floors,jup){
+  const p=a.player||{}, cs=a.creaturesList||[];
+  const kv=(k,v)=>{ const r=el('div','kv'); r.appendChild(el('span',null,k)); r.appendChild(el('span',null,v)); body.appendChild(r); };
+  kv('gold', nfInt.format(p.gold||0));
+  kv('ZOL balance', fmtZ(p.zenko_balance||0));
+  kv('stamina', nfInt.format(p.stamina||0));
+  const stored=cs.filter(c=>c.stored).length;
+  kv('pets active / vault', `${cs.length-stored} / ${stored}`);
+
+  const top5=[...cs].map(c=>({ c, f:floors[String(c.rarity||'').toLowerCase()]||0 }))
+    .sort((x,y)=>y.f-x.f).slice(0,5);
+  if(top5.length){
+    body.appendChild(el('div','subhdr','Top-5 by floor'));
+    for(const {c,f} of top5){
+      const row=el('div','pet');
+      const i=el('i'); i.style.background=`var(--r-${String(c.rarity||'').toLowerCase()}, var(--dim))`; row.appendChild(i);
+      row.appendChild(el('span','sp',c.species||'?'));
+      row.appendChild(el('span','meta',`${c.rarity||''} · ${c.stage||''}`));
+      if(c.variant && c.variant!=='Normal') row.appendChild(el('span','varb','✦ '+c.variant));
+      row.appendChild(el('span','fl', f>0?fmtZ(f)+' Z':'—'));
+      body.appendChild(row);
+    }
+  }
+  const log=(a.log||[]).slice(-6);
+  if(log.length){
+    body.appendChild(el('div','subhdr','Log'));
+    body.appendChild(el('div','miniLog',log.join('\n')));
+  }
+}
+
+/* ============================== sales log ============================== */
+function renderSales(s){
+  const sales=s.sales||{count:0,netZolana:0,netUsd:0,log:[]};
+  const net=$('salesNet'); net.textContent='';
+  net.appendChild(document.createTextNode('NET: '));
+  net.appendChild(el('b',null,`${fmtZ(sales.netZolana)} ZOL`));
+  net.appendChild(document.createTextNode(` · ${fmtUsd(sales.netUsd)} · ${sales.count} sales`));
+  const body=$('salesBody'); body.textContent='';
+  $('salesEmpty').style.display = sales.log.length ? 'none' : 'block';
+  for(const row of sales.log){
+    const tr=document.createElement('tr');
+    const td=(cls,txt)=>{ const d=el('td',cls,txt); tr.appendChild(d); return d; };
+    td('t', fmtHM(row.ts));
+    td(null, row.account||'?');
+    td(null, row.itemKind||'item');
+    td('z', '+'+fmtZ(row.zolana));
+    td('u', fmtUsd(row.usd||0));
+    body.appendChild(tr);
+  }
+}
+
+/* ============================== polling (silent retries) ============================== */
+async function fetchState(){
+  try{
+    const r=await fetch('/api/state'); if(!r.ok) return;
+    stateData=await r.json();
+    renderKpis(stateData); renderAccounts(stateData); renderSales(stateData);
+    $('lastUpd').textContent=new Date().toLocaleTimeString();
+    const live=(stateData.accounts||[]).filter(isLive).length;
+    $('liveCount').textContent=`${live}/${(stateData.accounts||[]).length}`;
+  }catch{ /* server restarting / network — keep the previous render */ }
+}
+async function fetchMarket(){
+  try{
+    const r=await fetch(`/api/market-history?hours=${ui.win}`); if(!r.ok) return;
+    marketData=await r.json();
+    renderChart();
+  }catch{ /* silent retry on the next tick */ }
+}
+
+initChart();
+renderControls();
+fetchState(); fetchMarket();
+setInterval(fetchState, STATE_POLL_MS);
+setInterval(fetchMarket, MARKET_POLL_MS);
+</script>
+</body>
+</html>

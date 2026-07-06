@@ -1,0 +1,29 @@
+# ── dependencies ──
+node_modules/
+
+# ── secrets & live wallet material (NEVER commit) ──
+.env
+.env.*.local
+wallets/
+master-key.txt
+accounts.json
+deposit-public-keys.txt
+# proxy pools carry user:pass credentials
+Webshare*.txt
+*proxies*.txt
+
+# ── live runtime state / telemetry ──
+logs/
+*.log
+
+# ── local tooling & scratch ──
+.claude/
+.agents/
+.playwright-mcp/
+.DS_Store
+
+# ── internal planning docs (strategy + collection-wallet opsec) ──
+docs/
+
+# ── editor / backup artifacts ──
+*.bak
