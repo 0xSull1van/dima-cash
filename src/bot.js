@@ -2122,7 +2122,7 @@ export class ZenkoBot {
     const batch = fodder.slice(0, cap).map(c => c.id);
     this.nextRecycleAt = now + this.rand(this.cfg.recycleCooldownMinMs, this.cfg.recycleCooldownMaxMs);
     if (this.cfg.recycleDryRun) {
-      this.log(`RECYCLE(dry) ${batch.length} fodder → ${target.species || String(target.id).slice(0, 6)} (${target.rarity || '?'})`);
+      this.log(`RECYCLE(dry) ${batch.length} fodder → XP into ${target.species || String(target.id).slice(0, 6)} (${target.rarity || '?'} target kept)`);
       return false;
     }
     try {
@@ -2131,7 +2131,9 @@ export class ZenkoBot {
         ref: { targetId: target.id, count: batch.length },
         meta: { fodderIds: batch, targetSpecies: target.species, targetRarity: target.rarity },
       });
-      this.log(`RECYCLE ${batch.length} → ${target.species || String(target.id).slice(0, 6)} ${target.rarity || ''} (XP, slots freed)`);
+      // wording is explicit (owner 2026-07-06 misread "RECYCLE 1 → X Rare" as "recycled a Rare"): the
+      // target is the Rare+ pet that GAINS XP and is KEPT; only the fodder (common/exhausted-uncommon) is consumed.
+      this.log(`RECYCLE ${batch.length} fodder → XP into ${target.species || String(target.id).slice(0, 6)} ${target.rarity || ''} (target kept, ${batch.length} slots freed)`);
       return true;
     } catch (e) {
       this.log('recycle err', e.status || '', (e.bodyText || e.message || '').slice(0, 80));

@@ -16,61 +16,78 @@ import {
   toTokenUnits,
 } from './stamina.js';
 
-export const REBALANCE_THRESHOLD = 10_000; // below → market gate closed, account is a recipient
-export const REBALANCE_TARGET = 12_000;    // top up to this level ("everyone at ~12000")
-export const REBALANCE_DONOR_FLOOR = 13_500; // a donor never drops below this (target + stamina buffer)
+export const REBALANCE_THRESHOLD = 10_000; // the marketplace gate: below this an account can't list/sell
+export const REBALANCE_TARGET = 12_000;    // fund a seller to this — above the 10k gate with a buffer for stamina drain
+export const REBALANCE_OP_RESERVE = 1_000; // every account keeps at least this (≥1 $ZOLANA play gate + a little stamina)
 
 export const REBALANCE_MIN_SELLABLE_PETS = 1;      // "makes sense to sell" gate: at least this many sellable pets…
 export const REBALANCE_MIN_SELLABLE_GOLD = 100_000; // …OR at least this much Gold (one cashout lot) worth trading
 
-// Pure planner: who's short and who shares. accounts: [{name, address, zolana}].
-// Greedy: the richest donor covers the largest need; amounts jittered +0..4% with a non-round
-// tail (not exactly 12000 for everyone — more human).
+// CONSOLIDATION planner (2026-07-06, owner: "concentrate $ZOLANA onto accounts that have pets to sell so
+// their market opens — must be >10k, fund to >12k; the old spread-evenly design never moved anything").
+// The fleet is $ZOLANA-short: ~147k across 18 accounts ≈ 8k each, so spread evenly NOBODY clears the 10k
+// gate (0 markets). Concentrated at 12k, ~12 accounts CAN sell. So instead of "only move surplus above a
+// donor floor" (which needs a donor that never exists here), we REALLOCATE the fleet's whole $ZOLANA:
+// keep a small opReserve on every account, then fund as many SELLABLE-pet accounts to `target` as the
+// fleet can afford — starting with the ones CLOSEST to target (cheapest to cross → maximizes how many
+// markets open) — draining everyone else (non-sellers + the un-funded) down to opReserve. Accounts with
+// nothing to sell are never funded (their idle $ZOLANA is exactly what we redistribute). As funded sellers
+// sell pets and earn $ZOLANA, the pool grows and the next cycle funds more (a bootstrap cascade).
 //
-// "Makes sense to sell" gate (2026-07-06, owner: "transfer to accounts that are short on trading funds
-// AND where it makes sense to sell"): only fund a short account that actually has something to list —
-// otherwise we'd spend real ZOLANA opening a market for an account with nothing to sell. Pass
-// `sellableByName` (a name -> { pets, gold } map, or a Map) built from live snapshots; a recipient
-// qualifies if it has ≥ minSellablePets sellable pets OR ≥ minSellableGold Gold. When `sellableByName` is
-// null (not provided), the gate is OFF and every short account qualifies (old behavior). Short accounts
-// that don't qualify are returned in `skipped` (with the reason) so the caller can log why they weren't funded.
-// Returns { transfers, unmet, skipped, donors, recipients }.
+// accounts: [{ name, address, zolana }]. sellableByName: name -> { pets, gold } (or a Map) from live
+// snapshots; null → treat every account as sellable (gate off, back-compat). Amounts are whole $ZOLANA;
+// funded accounts land jittered just above target (non-round). $ZOLANA is conserved (transfers net to
+// zero). Returns { transfers, unmet, skipped, donors, recipients, funded }.
 export function planZolanaRebalance(accounts = [], {
-  threshold = REBALANCE_THRESHOLD,
   target = REBALANCE_TARGET,
-  donorFloor = REBALANCE_DONOR_FLOOR,
+  opReserve = REBALANCE_OP_RESERVE,
   rng = Math.random,
   sellableByName = null,
   minSellablePets = REBALANCE_MIN_SELLABLE_PETS,
   minSellableGold = REBALANCE_MIN_SELLABLE_GOLD,
 } = {}) {
   const valid = (accounts || []).filter(a => a && a.name && a.address && Number.isFinite(Number(a.zolana)));
-  const getInv = (name) => {
-    if (!sellableByName) return null; // gate off
+  if (!valid.length) return { transfers: [], unmet: [], skipped: [], donors: [], recipients: [], funded: [] };
+
+  const invOf = (name) => {
+    if (!sellableByName) return null;
     return (sellableByName instanceof Map ? sellableByName.get(name) : sellableByName[name]) || { pets: 0, gold: 0 };
   };
-  const qualifies = (name) => {
-    const inv = getInv(name);
-    if (inv == null) return true; // no inventory data supplied → gate off, fund all short (old behavior)
+  const canSell = (name) => {
+    const inv = invOf(name);
+    if (inv == null) return true; // no inventory data → gate off, everyone is fundable
     return (Number(inv.pets) || 0) >= minSellablePets || (Number(inv.gold) || 0) >= minSellableGold;
   };
 
-  const donors = valid
-    .filter(a => Number(a.zolana) > donorFloor)
-    .map(a => ({ ...a, avail: Number(a.zolana) - donorFloor }))
+  // 1) Desired end-balance per account. Everyone keeps opReserve (but never reserve more than exists),
+  //    then concentrate the remaining budget onto sellable accounts — closest-to-target first.
+  const totalZ = valid.reduce((s, a) => s + Number(a.zolana), 0);
+  const reserveFloor = Math.max(0, Math.min(opReserve, Math.floor(totalZ / valid.length)));
+  const desired = new Map(valid.map(a => [a.name, reserveFloor]));
+  let budget = totalZ - reserveFloor * valid.length;
+
+  const fundOrder = valid.filter(a => canSell(a.name))
+    .map(a => ({ a, tgt: Math.round(target * (1 + rng() * 0.04)) + Math.floor(rng() * 40) })) // ~12000..12520, non-round
+    .sort((x, y) => Number(y.a.zolana) - Number(x.a.zolana)); // highest balance first = closest to target = cheapest to cross
+  const funded = [];
+  for (const { a, tgt } of fundOrder) {
+    if (budget <= 0) break;
+    const give = Math.min(budget, Math.max(0, tgt - reserveFloor));
+    if (give <= 0) continue;
+    desired.set(a.name, reserveFloor + give);
+    budget -= give;
+    if (reserveFloor + give >= tgt) funded.push(a.name);
+  }
+  // Leftover budget (fleet has MORE than enough to fund every seller to target) is intentionally left
+  // unallocated: below, donors only transfer what recipients actually need, so the surplus simply stays
+  // with the accounts that hold it — no account is drained further than necessary, no seller is over-funded.
+
+  // 2) Transfers from over-desired (donors) to under-desired (recipients). Greedy: biggest surplus → biggest need.
+  const donors = valid.filter(a => Number(a.zolana) - desired.get(a.name) >= 1)
+    .map(a => ({ ...a, avail: Number(a.zolana) - desired.get(a.name) }))
     .sort((x, y) => y.avail - x.avail);
-  const short = valid.filter(a => Number(a.zolana) < threshold);
-  const skipped = short
-    .filter(a => !qualifies(a.name))
-    .map(a => ({ name: a.name, reason: 'nothing to sell (no sellable pets, no Gold surplus)' }));
-  const needs = short
-    .filter(a => qualifies(a.name))
-    .map(a => {
-      const base = target - Number(a.zolana);
-      // jitter up + non-round tail: the recipient lands at 12k..12.5k+, not exactly on target
-      const amount = Math.round(base * (1 + rng() * 0.04)) + Math.floor(rng() * 18);
-      return { ...a, need: amount };
-    })
+  const needs = valid.filter(a => desired.get(a.name) - Number(a.zolana) >= 1)
+    .map(a => ({ ...a, need: desired.get(a.name) - Number(a.zolana) }))
     .sort((x, y) => y.need - x.need);
 
   const transfers = [];
@@ -78,17 +95,21 @@ export function planZolanaRebalance(accounts = [], {
   for (const r of needs) {
     let remaining = r.need;
     for (const d of donors) {
-      if (remaining <= 0) break;
-      if (d.avail <= 0 || d.name === r.name) continue;
-      const amount = Math.min(remaining, Math.floor(d.avail));
+      if (remaining < 1) break;
+      if (d.avail < 1 || d.name === r.name) continue;
+      const amount = Math.floor(Math.min(remaining, d.avail));
       if (amount < 1) continue;
       transfers.push({ from: d.name, fromAddress: d.address, to: r.name, toAddress: r.address, amount });
       d.avail -= amount;
       remaining -= amount;
     }
-    if (remaining > 0) unmet.push({ name: r.name, short: remaining });
+    if (remaining >= 1) unmet.push({ name: r.name, short: Math.round(remaining) });
   }
-  return { transfers, unmet, skipped, donors: donors.map(d => d.name), recipients: needs.map(n => n.name) };
+  // sellable accounts left under target because the fleet couldn't afford to fund them this cycle
+  const skipped = fundOrder.filter(({ a }) => !funded.includes(a.name) && Number(a.zolana) < target)
+    .map(({ a }) => ({ name: a.name, reason: 'not enough fleet $ZOLANA to fund to target this cycle' }));
+
+  return { transfers, unmet, skipped, donors: donors.map(d => d.name), recipients: needs.map(n => n.name), funded };
 }
 
 // Generic SPL ZOLANA transfer (same path as the production createStaminaRefillPayment, but the

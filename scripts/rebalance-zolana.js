@@ -58,12 +58,11 @@ export function readSellableInventory(logDir = LOG_DIR) {
 }
 
 function parseArgs(argv) {
-  const o = { execute: false, watchMin: 0, threshold: REBALANCE_THRESHOLD, target: REBALANCE_TARGET, gate: true };
+  const o = { execute: false, watchMin: 0, target: REBALANCE_TARGET, gate: true };
   for (const a of argv) {
     if (a === '--execute') o.execute = true;
-    else if (a === '--no-gate') o.gate = false; // fund every short account, even with nothing to sell
+    else if (a === '--no-gate') o.gate = false; // fund every account, even with nothing to sell
     else if (a.startsWith('--watch-min=')) o.watchMin = Number(a.split('=')[1]) || 0;
-    else if (a.startsWith('--threshold=')) o.threshold = Number(a.split('=')[1]) || o.threshold;
     else if (a.startsWith('--target=')) o.target = Number(a.split('=')[1]) || o.target;
   }
   return o;
@@ -96,21 +95,22 @@ async function passOnce(opts, rpcUrl, masterKey) {
 
   const inventory = readSellableInventory(LOG_DIR);
   const plan = planZolanaRebalance(balances, {
-    threshold: opts.threshold,
     target: opts.target,
-    sellableByName: opts.gate ? inventory : null, // gate on "has something to sell" unless --no-gate
+    sellableByName: opts.gate ? inventory : null, // fund only accounts that have something to sell unless --no-gate
   });
+  if (plan.funded?.length) {
+    console.log(`[rebalance] consolidating: fund ${plan.funded.length} seller(s) to ~${opts.target}+ → markets open: ${plan.funded.join(', ')}`);
+  }
   if (plan.skipped?.length) {
-    console.log(`[rebalance] skipped ${plan.skipped.length} short acct(s) with nothing to sell: ${plan.skipped.map(s => s.name).join(', ')}`);
+    console.log(`[rebalance] ${plan.skipped.length} seller(s) can't be funded this cycle (fleet $ZOLANA spread thin): ${plan.skipped.map(s => s.name).join(', ')}`);
   }
   if (!plan.transfers.length) {
-    const waiting = plan.recipients?.length ? ` — ${plan.recipients.length} acct(s) under the gate wait for a donor: ${plan.recipients.join(', ')}` : '';
-    console.log(`[rebalance] no transfers${plan.donors.length ? '' : ' (no donor above the floor yet)'}${waiting}${plan.unmet.length ? ` (unmet: ${JSON.stringify(plan.unmet)})` : ''}`);
+    console.log(`[rebalance] no transfers — already consolidated${plan.unmet.length ? ` (unmet: ${JSON.stringify(plan.unmet)})` : ''}`);
     return;
   }
-  console.log('[rebalance] plan:');
+  console.log(`[rebalance] plan (${plan.transfers.length} transfers, draining reserves → sellers):`);
   for (const t of plan.transfers) console.log(`  ${t.from} → ${t.to}: ${t.amount} ZOLANA`);
-  if (plan.unmet.length) console.log('[rebalance] ⚠️ not enough donors:', JSON.stringify(plan.unmet));
+  if (plan.unmet.length) console.log('[rebalance] under-funded this cycle (will top up as sellers earn):', JSON.stringify(plan.unmet));
   if (!opts.execute) { console.log('[rebalance] dry-run — add --execute for real transfers'); return; }
 
   for (const [index, t] of plan.transfers.entries()) {

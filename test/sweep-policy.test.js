@@ -106,76 +106,75 @@ test('parses env sweep policy without making live mode env-configurable', () => 
   });
 });
 
-// ── ZOLANA rebalance 2026-07-06 (owner: "everyone always at ~12000; below 10k, let another account share")
+// ── ZOLANA CONSOLIDATION 2026-07-06 (owner: "concentrate $ZOLANA onto accounts with pets to sell so their
+// market opens — >10k, fund to >12k; the old spread-evenly design never moved anything since 0 donors").
 import { planZolanaRebalance } from '../src/zolana-rebalance.js';
 
-test('planZolanaRebalance: donors cover needs, a donor stays above the floor, amounts are non-round', () => {
-  const rng = () => 0.5;
+const net = (plan) => { const m = {}; for (const t of plan.transfers) { m[t.from] = (m[t.from] || 0) - t.amount; m[t.to] = (m[t.to] || 0) + t.amount; } return m; };
+
+test('consolidation: drains a non-seller to fund a sellable account up to target', () => {
   const plan = planZolanaRebalance([
-    { name: 'rich', address: 'R1', zolana: 21_000 },   // avail = 21000-13500 = 7500
-    { name: 'mid', address: 'M1', zolana: 12_500 },    // neither a donor (below the floor) nor a recipient
-    { name: 'poor', address: 'P1', zolana: 8_000 },    // need ≈ (12000-8000)×1.02 + 8 ≈ 4088
-  ], { rng });
-  assert.equal(plan.transfers.length, 1);
-  const t = plan.transfers[0];
-  assert.equal(t.from, 'rich'); assert.equal(t.to, 'poor');
-  assert.ok(t.amount >= 4000 && t.amount <= 4300, `need with jitter (got ${t.amount})`);
-  assert.ok(t.amount % 100 !== 0, 'non-round amount');
-  assert.equal(plan.unmet.length, 0);
+    { name: 'idle', address: 'I1', zolana: 20_000 },   // no sellable pets → its idle $ZOLANA is redistributed
+    { name: 'seller', address: 'S1', zolana: 8_000 },  // has pets, below target → funded toward 12k
+  ], { rng: () => 0.5, sellableByName: { idle: { pets: 0, gold: 0 }, seller: { pets: 5, gold: 0 } } });
+  assert.deepEqual(plan.funded, ['seller'], 'the sellable account is funded; the idle one never is');
+  assert.ok(plan.transfers.length >= 1 && plan.transfers.every(t => t.from === 'idle' && t.to === 'seller'));
+  const got = plan.transfers.reduce((s, t) => s + t.amount, 0);
+  assert.ok(got >= 4000 && got <= 4600, `seller reaches ~12k (8k + ~4k, got +${got})`);
+  assert.ok(20_000 - got >= 1_000, 'the idle donor keeps at least the op-reserve, not fully drained when unneeded');
 });
 
-test('planZolanaRebalance: not enough donors → unmet, the rich one is not drained below the floor', () => {
-  const rng = () => 0;
+test('consolidation conserves $ZOLANA (every transfer nets to zero) and never over-funds', () => {
   const plan = planZolanaRebalance([
-    { name: 'rich', address: 'R1', zolana: 14_000 },   // avail only 500
-    { name: 'poor1', address: 'P1', zolana: 5_000 },   // need 7000
-  ], { rng });
-  assert.equal(plan.transfers.length, 1);
-  assert.equal(plan.transfers[0].amount, 500, 'a donor gives only the surplus above the floor');
-  assert.equal(plan.unmet.length, 1);
-  assert.ok(plan.unmet[0].short >= 6500);
+    { name: 'a', address: 'A', zolana: 15_000 }, { name: 'b', address: 'B', zolana: 9_000 },
+    { name: 'c', address: 'C', zolana: 6_000 }, { name: 'd', address: 'D', zolana: 3_000 },
+  ], { rng: () => 0.5, sellableByName: { a: { pets: 0 }, b: { pets: 5 }, c: { pets: 5 }, d: { pets: 5 } } });
+  const flow = net(plan);
+  assert.equal(Object.values(flow).reduce((s, v) => s + v, 0), 0, 'transfers conserve $ZOLANA');
+  // no recipient ends above target+buffer (no over-funding)
+  for (const acc of [{ n: 'b', z: 9_000 }, { n: 'c', z: 6_000 }, { n: 'd', z: 3_000 }]) {
+    assert.ok(acc.z + (flow[acc.n] || 0) <= 12_600, `${acc.n} not over-funded past ~target`);
+  }
 });
 
-test('planZolanaRebalance: all ≥ threshold → empty plan; never transfers to itself', () => {
-  assert.equal(planZolanaRebalance([
-    { name: 'a', address: 'A', zolana: 15000 }, { name: 'b', address: 'B', zolana: 11000 },
-  ]).transfers.length, 0);
+test('consolidation: fleet too short to fund all → funds the closest-to-target seller, drains the poorest', () => {
+  // total 24k, opReserve 1k×4 → budget 20k; target 12k needs ~11k each → only ~1 seller fully funded
+  const plan = planZolanaRebalance([
+    { name: 's1', address: 'A', zolana: 10_000 }, // closest to target → funded first, market opens
+    { name: 's2', address: 'B', zolana: 7_000 },
+    { name: 's3', address: 'C', zolana: 4_000 },  // poorest → drained toward op-reserve to fund s1
+    { name: 's4', address: 'D', zolana: 3_000 },
+  ], { rng: () => 0, sellableByName: { s1: { pets: 5 }, s2: { pets: 5 }, s3: { pets: 5 }, s4: { pets: 5 } } });
+  assert.deepEqual(plan.funded, ['s1'], 's1 (highest balance = cheapest to cross) is funded');
+  const flow = net(plan);
+  assert.equal(10_000 + (flow.s1 || 0), 12_000, 's1 reaches target 12k (rng=0 → no jitter)');
+  assert.ok((flow.s3 || 0) < 0 && (flow.s4 || 0) < 0, 'the poorest accounts donate (drained toward reserve)');
+  assert.ok(plan.skipped.some(s => s.name === 's4'), 's4 is skipped this cycle (fleet too short)');
 });
 
-// "Makes sense to sell" gate (2026-07-06): only fund short accounts that have something to list.
-test('planZolanaRebalance: gate funds short accounts WITH sellable pets, skips empty ones', () => {
-  const rng = () => 0;
+test('consolidation: a non-seller is NEVER funded (its idle $ZOLANA only ever donates)', () => {
   const plan = planZolanaRebalance([
-    { name: 'rich', address: 'R1', zolana: 30_000 },   // donor, avail 16500
-    { name: 'seller', address: 'S1', zolana: 8_000 },  // short + has pets → funded
-    { name: 'empty', address: 'E1', zolana: 8_000 },   // short + nothing to sell → skipped
-  ], {
-    rng,
-    sellableByName: { seller: { pets: 5, gold: 0 }, empty: { pets: 0, gold: 0 } },
-  });
-  assert.deepEqual(plan.transfers.map(t => t.to), ['seller'], 'only the account with pets is funded');
-  assert.deepEqual(plan.skipped.map(s => s.name), ['empty'], 'the empty account is skipped with a reason');
-  assert.ok(plan.skipped[0].reason.includes('nothing to sell'));
+    { name: 'seller', address: 'S1', zolana: 11_000 },
+    { name: 'empty', address: 'E1', zolana: 2_000 }, // no pets, below target — but NOT a recipient
+  ], { rng: () => 0, sellableByName: { seller: { pets: 5 }, empty: { pets: 0, gold: 0 } } });
+  assert.equal(plan.recipients.includes('empty'), false, 'empty (no pets) is never a recipient');
+  assert.deepEqual(plan.funded, ['seller']);
+  // empty at 2000 > opReserve 1000 → it donates 1000 to help fund the seller
+  assert.ok(plan.transfers.every(t => t.to === 'seller'));
 });
 
-test('planZolanaRebalance: gate also funds a short account sitting on a Gold pile (no pets)', () => {
+test('consolidation: a Gold-pile account counts as sellable (funded)', () => {
   const plan = planZolanaRebalance([
-    { name: 'rich', address: 'R1', zolana: 30_000 },
-    { name: 'goldbag', address: 'G1', zolana: 9_000 }, // no pets but 400k gold → funded
-  ], {
-    rng: () => 0,
-    sellableByName: { goldbag: { pets: 0, gold: 400_000 } },
-    minSellableGold: 100_000,
-  });
-  assert.deepEqual(plan.transfers.map(t => t.to), ['goldbag']);
-  assert.equal(plan.skipped.length, 0);
+    { name: 'idle', address: 'I1', zolana: 20_000 },
+    { name: 'goldbag', address: 'G1', zolana: 9_000 }, // no pets but 400k gold → sellable → funded
+  ], { rng: () => 0, sellableByName: { idle: { pets: 0, gold: 0 }, goldbag: { pets: 0, gold: 400_000 } }, minSellableGold: 100_000 });
+  assert.deepEqual(plan.funded, ['goldbag']);
 });
 
-test('planZolanaRebalance: no sellableByName → gate OFF (backward compatible, funds all short)', () => {
+test('consolidation: no sellableByName → every account is fundable (back-compat gate off)', () => {
   const plan = planZolanaRebalance([
-    { name: 'rich', address: 'R1', zolana: 30_000 },
-    { name: 'unknown', address: 'U1', zolana: 8_000 }, // no inventory data → still funded
+    { name: 'a', address: 'A', zolana: 20_000 },
+    { name: 'b', address: 'B', zolana: 8_000 },
   ], { rng: () => 0 });
-  assert.deepEqual(plan.transfers.map(t => t.to), ['unknown']);
-  assert.equal(plan.skipped.length, 0);
+  assert.ok(plan.funded.includes('a') || plan.funded.includes('b'), 'accounts are funded without inventory data');
 });
