@@ -29,7 +29,7 @@ ok(Math.abs(goldFloorUsd(rows) - 0.0000018) < 1e-10, `goldFloorUsd ${goldFloorUs
 ok(marketFloorUsd(rows, { itemKind: 'relic' }) === 3.0, `relic floor ${marketFloorUsd(rows, { itemKind: 'relic' })}`);
 ok(goldFloorUsd(parseListings({ listings: [] })) === null, 'null floor when no gold');
 
-// ── floor excludes our own fleet listings (anti self-dump / "по маркету" = внешний рынок) ──
+// ── floor excludes our own fleet listings (anti self-dump / "at market" = the external market) ──
 const fleetSample = parseListings({ listings: [
   { id: 'ext', item_kind: 'gold', quantity: 1_000_000, price_usd: 5.0, currency: 'zenko', seller: 'EXTERNAL' }, // external: $0.000005/u
   { id: 'own', item_kind: 'gold', quantity: 1_000_000, price_usd: 1.0, currency: 'zenko', seller: 'OURS1' },    // ours (cheaper) — must be ignored
@@ -239,7 +239,7 @@ ok(creatureFloorUsdForRarity('legendary', fbr, 0.0002) === null, 'no live data a
 ok(creatureFloorUsdForRarity('uncommon', fbr, 0.0002) === CREATURE_FLOOR_SEED_USD.uncommon, 'uncommon also has an owner seed now, used when live data is missing');
 ok(creatureFloorUsdForRarity('epic', fbr, 0.0002) === 2, `live epic floor still wins when present (10000×0.0002=2.00), got ${creatureFloorUsdForRarity('epic', fbr, 0.0002)}`);
 
-// VARIANT PRICE OVERRIDE (2026-07-06, friend: «анкамон рейнбоу... по 0.2»): a specific (rarity,variant)
+// VARIANT PRICE OVERRIDE (2026-07-06, friend: "uncommon rainbow... at 0.2"): a specific (rarity,variant)
 // override beats BOTH the live per-rarity floor AND the rarity seed — neither of those distinguishes
 // variant, so reusing them for a Rainbow would misprice it (almost certainly underprice it).
 ok(creatureFloorUsdForRarity('uncommon', fbr, 0.0002, 'rainbow') === CREATURE_VARIANT_PRICE_OVERRIDE_USD['uncommon:rainbow'],
@@ -278,7 +278,7 @@ const recRoster = [
 const fodder = pickRecycleFodder(recRoster, { busyIds: new Set(['busy']) });
 const fodderIds = new Set(fodder.map(c => c.id));
 ok(fodderIds.has('c1') && fodderIds.has('u1'), 'default fodder includes Common+Uncommon normal');
-// farm profile config: только Common → XP, Uncommon (зелёных) оставляем в скваде
+// farm profile config: only Common → XP, keep Uncommon (the green ones) in the squad
 const commonOnly = pickRecycleFodder(recRoster, { recycleFodderRarities: ['common'], busyIds: new Set(['busy']) });
 const commonIds = new Set(commonOnly.map(c => c.id));
 ok(commonIds.has('c1'), 'common-only fodder includes Common');
@@ -329,7 +329,7 @@ const exFodder = new Set(pickRecycleFodder(exhaustRoster, exCfg).map(c => c.id))
 ok(exFodder.has('u_spent'), 'exhausted 8/8 Uncommon → XP fodder');
 ok(!exFodder.has('u_stock'), 'un-exhausted Uncommon kept as breeding stock (not recycled)');
 ok(!exFodder.has('r_spent'), 'exhausted Rare is NOT recycled (held for later sale)');
-ok(exFodder.has('u_shy_spent'), 'exhausted 8/8 SHINY Uncommon → XP fodder too (owner: shiny uncommon = обычная анкомонка)');
+ok(exFodder.has('u_shy_spent'), 'exhausted 8/8 SHINY Uncommon → XP fodder too (owner: shiny uncommon = an ordinary uncommon)');
 ok(!exFodder.has('u_gold_spent'), 'exhausted 8/8 GOLDEN Uncommon still protected (only Shiny demoted)');
 
 // BUG FIX: placed fodder must be unplaceable so it can be recycled (place-auto parks commons on
@@ -354,7 +354,7 @@ ok(placedFodder.has('ue'), 'placed exhausted 8/8 Uncommon IS unplace-fodder');
 ok(!placedFodder.has('us'), 'placed un-exhausted Uncommon kept (breeding stock)');
 ok(!placedFodder.has('rp'), 'placed Rare never unplace-fodder');
 
-// VAULT candidate («рарки в сейф», roster-full pressure valve): least-valuable idle Rare+, keeping
+// VAULT candidate ("rares into the vault", roster-full pressure valve): least-valuable idle Rare+, keeping
 // the strongest N as dungeon runners; never commons/uncommons, never busy/favorite, never recycle target.
 const vaultRoster = [
   { id:'leg', rarity:'Legendary', stage:'Elder',  level:20 },                 // strongest → keep
@@ -372,7 +372,7 @@ ok(vcKeep === null, 'keepStrongest protects all runners → nothing to vault');
 ok(pickVaultCandidate([{ id:'c', rarity:'Common', stage:'Adult', level:5 }], {}) === null, 'no Rare+ → null (never vault commons)');
 ok(pickVaultCandidate([{ id:'r', rarity:'Rare', stage:'Adult', level:9, is_favorite:true }], {}) === null, 'favorite Rare never vaulted');
 
-// VAULT SWAP (флот↔сейф continuous polish, 2026-07-05): pickVaultCandidate is one-shot and forgets —
+// VAULT SWAP (fleet↔vault continuous polish, 2026-07-05): pickVaultCandidate is one-shot and forgets —
 // stored creatures never come back on their own. planVaultSwap admits the strongest stored Rare+ when
 // it clearly beats (by vaultSwapMinValueMargin) the weakest EVICTABLE active Rare+, swapping the two.
 const swapRoster = [
@@ -435,8 +435,8 @@ ok(pickJunkCreatures(junkBreedRoster, { junkCreatureRarities: ['uncommon'], junk
 const gatedJunk = pickJunkCreatures(junkBreedRoster, { junkCreatureRarities: ['uncommon'], junkCreatureStages: ['Adult'], junkCreatureKeepPerSpecies: 0, junkMinBreedCount: 8 });
 ok(gatedJunk.length === 1 && gatedJunk[0].id === 'done', `junkMinBreedCount:8 → only the exhausted one is sellable (got ${JSON.stringify(gatedJunk.map(c=>c.id))})`);
 
-// VARIANT/RARITY SELL OVERRIDE (junkVariantRarityOverrides, 2026-07-06, friend: «анкамон рейнбоу...
-// в сейф, и по 0.2, на рынок»): a specific (rarity,variant) pair becomes sellable even though the
+// VARIANT/RARITY SELL OVERRIDE (junkVariantRarityOverrides, 2026-07-06, friend: "uncommon rainbow...
+// into the vault, and at 0.2, on the market"): a specific (rarity,variant) pair becomes sellable even though the
 // variant itself isn't in the general junkCreatureVariants allowlist — WITHOUT widening eligibility
 // for that variant at any OTHER rarity, and WITHOUT touching Golden/Shadow (untouched, still excluded).
 const variantRoster = [

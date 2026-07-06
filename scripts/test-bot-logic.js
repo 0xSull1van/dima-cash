@@ -1,5 +1,5 @@
-// Юнит-тест логики бота на мок-клиенте (без сети, без мастер-ключа).
-// Проверяем: money-guard, климбер глубины, автоэволюцию, клейм.
+// Unit test of the bot logic on a mock client (no network, no master key).
+// We verify: money-guard, depth climber, auto-evolution, claim.
 import { ZenkoBot } from '../src/bot.js';
 import { CREATURE_FLOOR_SEED_USD, CREATURE_VARIANT_PRICE_OVERRIDE_USD } from '../src/marketplace.js';
 import { readFileSync, existsSync, unlinkSync } from 'node:fs';
@@ -10,7 +10,7 @@ let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; } else { fail++; console.log('  FAIL:', m); } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// мок-клиент: записывает вызовы, отдаёт заранее заданные ответы/ошибки
+// mock client: records calls, returns predefined responses/errors
 function mockClient(handler) {
   return {
     address: 'MockWa11etAddr1111111111111111111111111111',
@@ -20,7 +20,7 @@ function mockClient(handler) {
   };
 }
 
-// --- 1) money-guard: запретные эндпоинты кидают BLOCKED ---
+// --- 1) money-guard: forbidden endpoints throw BLOCKED ---
 {
   const bot = new ZenkoBot(mockClient(() => ({})), { name: 't1' });
   let blocked = false;
@@ -38,9 +38,9 @@ function mockClient(handler) {
   }
 }
 
-// --- 2) климбер глубины: успех → +1; power-ошибка → потолок вниз ---
+// --- 2) depth climber: success → +1; power error → ceiling down ---
 {
-  let failAtOrAbove = 99; // клиент отказывает по силе на этой глубине и выше
+  let failAtOrAbove = 99; // the client rejects on power at this depth and above
   const client = mockClient((path, body) => {
     if (path === '/api/dungeon/start') {
       if (body.dungeonId >= failAtOrAbove) { const e = new Error('too weak'); e.status = 400; e.bodyText = 'Party power too low'; throw e; }
@@ -58,7 +58,7 @@ function mockClient(handler) {
   await bot.handleDungeons(stateOf()); // d3 ok -> 4
   ok(bot.depth === 4, `depth keeps climbing (got ${bot.depth})`);
 
-  // теперь стенка на d4
+  // now the wall is at d4
   failAtOrAbove = 4;
   await bot.handleDungeons(stateOf()); // d4 fails -> ceiling 3, depth 3
   ok(bot.depthCeiling === 3 && bot.depth === 3, `ceiling backs off on power error (ceil ${bot.depthCeiling}, depth ${bot.depth})`);
@@ -67,7 +67,7 @@ function mockClient(handler) {
   ok(startedDepths.includes(3) && Math.max(...startedDepths) === 4, `runs within ceiling, tried up to 4 (${startedDepths.join(',')})`);
 }
 
-// --- 3) автоэволюция: зовёт evolve для не-Elder, пропускает Elder ---
+// --- 3) auto-evolution: calls evolve for non-Elder, skips Elder ---
 {
   const client = mockClient((path) => { if (path === '/api/creature/evolve') return { ok: true }; return {}; });
   const bot = new ZenkoBot(client, { name: 't3' });
@@ -125,7 +125,7 @@ function mockClient(handler) {
   ok(client3.calls.filter(c => c.path === '/api/relic/enhance').length === 0, 'no enhance when flag off');
 }
 
-// --- 4) клейм готового забега; активный не трогает ---
+// --- 4) claim a finished run; don't touch an active one ---
 {
   const now = Date.now();
   const client = mockClient((path) => { if (path === '/api/dungeon/claim') return { dungeonRewards: { gold: 512 } }; return {}; });
@@ -133,8 +133,8 @@ function mockClient(handler) {
   const ledger = [];
   bot.recordEvent = (type, event) => ledger.push({ type, ...event });
   const state = { player: { gold: 0 }, creatures: [], eggs: [], materials: [], dungeonRuns: [
-    { id: 'r1', status: 'active', ready_at: new Date(now - 1000).toISOString(), party: [] }, // готов
-    { id: 'r2', status: 'active', ready_at: new Date(now + 60000).toISOString(), party: [] }, // ещё бежит
+    { id: 'r1', status: 'active', ready_at: new Date(now - 1000).toISOString(), party: [] }, // ready
+    { id: 'r2', status: 'active', ready_at: new Date(now + 60000).toISOString(), party: [] }, // still running
   ] };
   await bot.handleDungeons(state);
   const claimed = client.calls.filter(c => c.path === '/api/dungeon/claim').map(c => c.body.runId);
@@ -143,7 +143,7 @@ function mockClient(handler) {
     `records dungeon claim reward (${JSON.stringify(ledger)})`);
 }
 
-// --- 5) награды: клеймит невыполненные квесты, пропускает уже забранный онбординг, берёт стипенд ---
+// --- 5) rewards: claims uncompleted quests, skips already-claimed onboarding, takes the stipend ---
 {
   const client = mockClient((path) => {
     if (path === '/api/quests/claim') return { reward: { gold: 100 } };
@@ -157,13 +157,13 @@ function mockClient(handler) {
   ok(!q.includes('o_place'), 'skips already-claimed onboarding quest');
   ok(q.includes('o_own4') && q.includes('d_gold'), `attempts unclaimed quests (${q.length} tried)`);
   ok(client.calls.some(c => c.path === '/api/gems/hold-claim'), 'claims holder gem stipend');
-  // троттл: второй вызов сразу — ничего не шлёт
+  // throttle: a second call right away — sends nothing
   const before = client.calls.length;
   await bot.handleRewards(state);
   ok(client.calls.length === before, 'rewards throttled (no repeat within window)');
 }
 
-// --- 6) тир-прогрессия яиц: <20 питомцев → basic; ≥20 → элементные 50k ---
+// --- 6) egg tier progression: <20 pets → basic; ≥20 → elemental 50k ---
 {
   const mk = (nCreatures, gold) => {
     const client = mockClient(() => ({}));
@@ -171,7 +171,7 @@ function mockClient(handler) {
     const state = { player: { gold }, creatures: Array.from({ length: nCreatures }, (_, i) => ({ id: 'c' + i, plot_x: 1 })), eggs: [], dungeonRuns: [], materials: [] };
     return { client, bot, state };
   };
-  // мало питомцев → basic
+  // few pets → basic
   let { client, bot, state } = mk(5, 100000);
   let ledger = [];
   bot.recordEvent = (type, event) => ledger.push({ type, ...event });
@@ -180,14 +180,14 @@ function mockClient(handler) {
   ok(buys[0] === 'basic', `<20 creatures buys basic (got ${buys[0]})`);
   ok(ledger.some(e => e.type === 'egg_buy' && e.amounts?.gold === -2500 && e.ref?.eggType === 'basic'),
     `records basic egg spend (${JSON.stringify(ledger)})`);
-  // 20+ питомцев, есть 50k → элементное
+  // 20+ pets, has 50k → elemental
   ({ client, bot, state } = mk(22, 100000));
   ledger = [];
   bot.recordEvent = (type, event) => ledger.push({ type, ...event });
   await bot.handleEggs(state);
   buys = client.calls.filter(c => c.path === '/api/egg/buy').map(c => c.body.eggType);
   ok(buys[0] && buys[0] !== 'basic' && ['forest','ocean','mountain','volcano','sky'].includes(buys[0]), `≥20 creatures buys elemental (got ${buys[0]})`);
-  // 20+ питомцев но Gold < 50k+reserve → не покупает
+  // 20+ pets but Gold < 50k+reserve → doesn't buy
   ok(ledger.some(e => e.type === 'egg_buy' && e.amounts?.gold === -50000 && e.ref?.eggType === buys[0]),
     `records elemental egg spend (${JSON.stringify(ledger)})`);
   ({ client, bot, state } = mk(22, 40000));
@@ -412,7 +412,7 @@ function mockClient(handler) {
   ok(client.calls.length === before, 'breed throttled (no repeat within window)');
 }
 
-// --- 10b) BREED FROM VAULT 2026-07-05 (owner: "можно же с сейфа придить") — end-to-end proof through
+// --- 10b) BREED FROM VAULT 2026-07-05 (owner: "you can breed from the vault, right") — end-to-end proof through
 //     the FULL call chain, not just planBreedPair in isolation. Regression guard: busyIds() (used by
 //     dispatchRuns/idleRoster) intentionally marks stored:true as busy — if handleBreed reused that
 //     SAME set for planBreedPair, the vaulted creature would be filtered out before isBreedEligible
@@ -432,7 +432,7 @@ function mockClient(handler) {
   ok(pairIds.has('vaulted') && pairIds.has('active'), `pair includes the vaulted parent (${JSON.stringify(calls[0]?.body)})`);
 }
 
-// --- 10c) VAULT SWAP end-to-end 2026-07-05 (owner: "надо для автоматизации") — proves the two
+// --- 10c) VAULT SWAP end-to-end 2026-07-05 (owner: "needed for automation") — proves the two
 //     storage/move calls fire in the safe order (evict weak THEN admit strong, never asks for a slot
 //     over cap) through the real handleVaultSwap → planVaultSwap chain, not just the isolated planner.
 {
@@ -491,8 +491,8 @@ function mockClient(handler) {
   ok(client.calls.length === callsAfterFirst, 'throttled call makes no new API calls');
 }
 
-// --- 10f) VAULT INTAKE end-to-end 2026-07-06 (owner: "пусть бридятся, только в сейфе, нужно
-//     перекидывать их") — a fresh, non-exhausted Uncommon is moved INTO the vault to breed there for
+// --- 10f) VAULT INTAKE end-to-end 2026-07-06 (owner: "let them breed, but in the vault, they need to
+//     be moved around") — a fresh, non-exhausted Uncommon is moved INTO the vault to breed there for
 //     free, keeping the strongest runner untouched.
 {
   const client = mockClient(() => ({}));
@@ -571,7 +571,7 @@ function mockClient(handler) {
   ok(!client.calls.some(c => c.path === '/api/storage/move'), 'no storage/move calls when pipeline is off');
 }
 
-// --- 10j) REGRESSION 2026-07-06 (owner: "яйца не двигаются" — main stuck at 50/50, 0 stored, despite
+// --- 10j) REGRESSION 2026-07-06 (owner: "the eggs aren't moving" — main stuck at 50/50, 0 stored, despite
 //     pickBreedingIntake finding a valid candidate on real data): vaultIntake/vaultGraduate/vaultSwap
 //     used to run in preDungeonActions, BEFORE claim — so a creature still carrying last-tick's run_id
 //     always looked "busy", and intake could never find a free candidate on an account whose whole
@@ -972,8 +972,8 @@ function mockClient(handler) {
     `no live Rare floor → lists at owner seed $${CREATURE_FLOOR_SEED_USD.rare} (${JSON.stringify(list?.body)})`);
 }
 
-// --- 17c) VARIANT/RARITY SELL OVERRIDE end-to-end 2026-07-06 (owner: "анкамон рейнбоу... в сейф, и по
-//     0.2, на рынок") — an exhausted Uncommon Rainbow is eligible for sale (unlike a normal-variant
+// --- 17c) VARIANT/RARITY SELL OVERRIDE end-to-end 2026-07-06 (owner: "uncommon rainbow... into the vault, and
+//     sell at 0.2 on the market") — an exhausted Uncommon Rainbow is eligible for sale (unlike a normal-variant
 //     Golden of the same rarity, which stays excluded) and lists at the $0.2 variant override price,
 //     NOT the plain $0.03 Uncommon seed — through the real pickJunkCreatures→listJunkItem chain. ---
 {
@@ -1076,8 +1076,8 @@ function mockClient(handler) {
     `gold-weighted cashout lists Gold first (${JSON.stringify(list?.body)})`);
 }
 
-// --- 18b) GOLD SELL HYSTERESIS 2026-07-06 (owner: "когда накапливается 1.5М пусть сливает 1М,
-//     постепенно, по 100к" — found while investigating why gold had NEVER sold once all session).
+// --- 18b) GOLD SELL HYSTERESIS 2026-07-06 (owner: "when 1.5M accumulates let it dump 1M,
+//     gradually, in 100k lots" — found while investigating why gold had NEVER sold once all session).
 //     A plain reserve-subtraction gate (surplus=gold-reserve>=minLot) would start selling as soon as
 //     gold crosses reserve+minLot, and re-trigger on every small uptick thereafter — NOT what was
 //     asked. cashoutGoldSellTrigger adds an arm/disarm state machine on top: must reach the trigger
@@ -1369,7 +1369,7 @@ function mockClient(handler) {
   }
 }
 
-// --- 25) REAL API SHAPE FOUND 2026-07-06 (owner: "почему мы так медленно генерим петтов") — root
+// --- 25) REAL API SHAPE FOUND 2026-07-06 (owner: "why do we generate pets so slowly") — root
 //     cause: /api/player/load returns the ACTIVE roster in `creatures` and vaulted creatures SEPARATELY
 //     in `stored.creatures` (confirmed on a raw live dump: every entry in `creatures` has stored:false;
 //     entries with stored:true + stored_at + a real breed_count only ever appear in `stored.creatures`).
@@ -1451,7 +1451,7 @@ function mockClient(handler) {
   if (existsSync(file)) unlinkSync(file);
 }
 
-// --- 26) EPIC ADDED TO VAULT-BREEDING 2026-07-06 (owner: "надо чтоб епик тоже бридились") — before
+// --- 26) EPIC ADDED TO VAULT-BREEDING 2026-07-06 (owner: "epics should breed too") — before
 //     this, Epic could only breed if it happened to stay on the active roster and find a same-species
 //     partner there (competing with dungeon duty); now it gets the same free-vault treatment as
 //     Uncommon/Rare when vaultBreedingRarities explicitly includes 'epic' (farm profile does; this test
@@ -1493,7 +1493,7 @@ function mockClient(handler) {
   ok(intaken === false, `without 'epic' explicitly configured, an Epic creature is correctly NOT vaulted (got ${intaken})`);
 }
 
-// --- 27) LIVE INCIDENT 2026-07-06 (owner: "в дашборде 18 акков, всм?" — caught a real, currently-
+// --- 27) LIVE INCIDENT 2026-07-06 (owner: "18 accounts in the dashboard, what's up?" — caught a real, currently-
 //     ongoing bug via the mismatch between "ledger shows activity" and "dashboard shows stale data"):
 //     on accounts where the vault has NEVER been used, the real API returns state.stored.creatures as
 //     something OTHER than an array (reproduced: a plain {} throws "is not iterable" when spread).

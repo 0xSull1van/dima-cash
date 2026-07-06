@@ -1,5 +1,5 @@
-// Первый безопасный запуск для реального кошелька: логин -> создать/загрузить игрока -> дамп состояния.
-// Ничего не тратит. Показывает точную схему player/load, чтобы финализировать авто-цикл.
+// First safe run for a real wallet: log in -> create/load the player -> dump the state.
+// Spends nothing. Shows the exact player/load schema so the auto-loop can be finalized.
 //
 //   $env:ZENKO_MASTER_KEY="..."; node scripts/bootstrap.js main
 //   $env:ZENKO_MASTER_KEY="..."; node scripts/bootstrap.js spare --username=myname

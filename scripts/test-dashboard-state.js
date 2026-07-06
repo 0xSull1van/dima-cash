@@ -72,7 +72,7 @@ appendLedgerEvent('spare', { type: 'creature_vault', ts: new Date(now - 8 * 60 *
 appendLedgerEvent('spare', { type: 'creature_unvault', ts: new Date(now - 9 * 60 * 1000).toISOString(), ref: { creatureId: 'v1' } }, { logDir }); // vault↔fleet swap (2026-07-05)
 appendLedgerEvent('spare', { type: 'breed', ts: new Date(now - 90 * 60 * 1000).toISOString(), amounts: { gold: -10000 }, ref: { species: 'fox' } }, { logDir }); // outside 1h window
 
-// "Профит сегодня" (2026-07-06) needs a live Gold→USD floor + a Jupiter ZOLANA→USD price to blend with.
+// "Profit today" (2026-07-06) needs a live Gold→USD floor + a Jupiter ZOLANA→USD price to blend with.
 appendFloorSnapshot('main', { uncommon: 100 }, {}, { logDir, now: now - 5 * 60 * 1000, goldFloorUsd: 0.000002 });
 appendJupiterPrice(0.0003, { logDir, now: now - 5 * 60 * 1000 });
 
@@ -96,13 +96,13 @@ ok(state.totalAnalytics?.realized?.pnlZolana === 700, `total pnl ${state.totalAn
 ok(state.totalAnalytics?.performance?.paybackPct === 800, `total payback ${state.totalAnalytics?.performance?.paybackPct}`);
 ok(main?.analytics?.zolanaWindows?.h1?.netPerHour === 750, `main 1h net/h ${main?.analytics?.zolanaWindows?.h1?.netPerHour}`);
 ok(state.totalAnalytics?.zolanaWindows?.h1?.netZolana === 700, `fleet 1h net ${state.totalAnalytics?.zolanaWindows?.h1?.netZolana}`);
-// gross Gold earned/hour ("весь заработок" — spending NOT subtracted; from dungeon_claim income)
+// gross Gold earned/hour ("total earnings" — spending NOT subtracted; from dungeon_claim income)
 ok(main?.analytics?.goldWindows?.h1?.grossGold === 70000, `main 1h gross gold ${main?.analytics?.goldWindows?.h1?.grossGold}`);
 ok(main?.analytics?.goldWindows?.h1?.grossPerHour === 70000, `main 1h gross gold/h ${main?.analytics?.goldWindows?.h1?.grossPerHour}`);
 ok(main?.analytics?.goldWindows?.h1?.netGold === 20000, `main 1h net gold ${main?.analytics?.goldWindows?.h1?.netGold}`);
 ok(state.totalAnalytics?.goldWindows?.h1?.grossPerHour === 70000, `fleet 1h gross gold/h ${state.totalAnalytics?.goldWindows?.h1?.grossPerHour}`);
 
-// "Профит сегодня" (profitUsd24h, 2026-07-06): main gross gold(h24)=70000 × goldFloorUsd(0.000002) +
+// "Profit today" (profitUsd24h, 2026-07-06): main gross gold(h24)=70000 × goldFloorUsd(0.000002) +
 // net zolana(h24)=750 (800 sale − 50 refill) × jupiterPrice(0.0003) = 0.14 + 0.225 = 0.365.
 // Fleet: same gross gold (only main mined any) + net zolana 700 (750 main − 50 spare refill) = 0.35.
 ok(Math.abs((main?.analytics?.profitUsd24h ?? NaN) - 0.365) < 1e-9, `main profitUsd24h ${main?.analytics?.profitUsd24h}`);

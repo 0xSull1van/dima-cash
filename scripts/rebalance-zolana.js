@@ -1,9 +1,9 @@
-// Ребаланс $ZOLANA по флоту: у всех должно быть ≥10k (маркет-гейт), доливаем до ~12k из излишков
-// богатых кошельков (донор не опускается ниже 13.5k). По умолчанию DRY-RUN (только план);
-// --execute + ZENKO_MASTER_KEY — реальные переводы с человеческими паузами.
-//   node scripts/rebalance-zolana.js                      # план по живым ончейн-балансам
-//   node scripts/rebalance-zolana.js --execute            # выполнить план один раз
-//   node scripts/rebalance-zolana.js --execute --watch-min=360   # проверять каждые ~6ч (±20%), вечно
+// Rebalance $ZOLANA across the fleet: everyone should have ≥10k (the market gate), top up to ~12k from
+// the surplus of rich wallets (a donor never drops below 13.5k). DRY-RUN by default (plan only);
+// --execute + ZENKO_MASTER_KEY — real transfers with human pauses.
+//   node scripts/rebalance-zolana.js                      # plan from live on-chain balances
+//   node scripts/rebalance-zolana.js --execute            # run the plan once
+//   node scripts/rebalance-zolana.js --execute --watch-min=360   # check every ~6h (±20%), forever
 import { loadEnv, requireMasterKey } from '../src/env.js';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { DEFAULT_SOLANA_RPC, ZOLANA_MINT } from '../src/stamina.js';
@@ -41,10 +41,10 @@ async function onchainZolana(address, proxyUrl, rpcUrl) {
 }
 
 async function passOnce(opts, rpcUrl, masterKey) {
-  // рабочие игроки: funded-статус ИЛИ уже играющие (main/spare живут вне статуса)
+  // working players: funded status OR already playing (main/spare live outside the status)
   const accounts = (loadRegistry().accounts || []).filter(a =>
     a.address && (a.status === 'stamina_float_ready' || ['main', 'spare'].includes(a.name)));
-  console.log(`[rebalance] ончейн-балансы ${accounts.length} акков…`);
+  console.log(`[rebalance] on-chain balances of ${accounts.length} accounts…`);
   const balances = [];
   for (const a of accounts) {
     const zolana = await onchainZolana(a.address, a.proxyUrl || process.env[a.proxyEnv], rpcUrl);
@@ -54,17 +54,17 @@ async function passOnce(opts, rpcUrl, masterKey) {
 
   const plan = planZolanaRebalance(balances, { threshold: opts.threshold, target: opts.target });
   if (!plan.transfers.length) {
-    console.log(`[rebalance] все ≥ ${opts.threshold} — переводы не нужны${plan.unmet.length ? ` (unmet: ${JSON.stringify(plan.unmet)})` : ''}`);
+    console.log(`[rebalance] all ≥ ${opts.threshold} — no transfers needed${plan.unmet.length ? ` (unmet: ${JSON.stringify(plan.unmet)})` : ''}`);
     return;
   }
-  console.log('[rebalance] план:');
+  console.log('[rebalance] plan:');
   for (const t of plan.transfers) console.log(`  ${t.from} → ${t.to}: ${t.amount} ZOLANA`);
-  if (plan.unmet.length) console.log('[rebalance] ⚠️ доноров не хватило:', JSON.stringify(plan.unmet));
-  if (!opts.execute) { console.log('[rebalance] dry-run — добавь --execute для реальных переводов'); return; }
+  if (plan.unmet.length) console.log('[rebalance] ⚠️ not enough donors:', JSON.stringify(plan.unmet));
+  if (!opts.execute) { console.log('[rebalance] dry-run — add --execute for real transfers'); return; }
 
   for (const [index, t] of plan.transfers.entries()) {
     const delayMs = fundingDelayMs({ index, execute: true, minSec: 25, maxSec: 110 });
-    if (delayMs > 0) { console.log(`[rebalance] пауза ${(delayMs / 1000).toFixed(0)}s…`); await sleep(delayMs); }
+    if (delayMs > 0) { console.log(`[rebalance] pause ${(delayMs / 1000).toFixed(0)}s…`); await sleep(delayMs); }
     try {
       const wallet = loadWallet(t.from, masterKey);
       const sig = await sendZolana(wallet, { toAddress: t.toAddress, amountZolana: t.amount, rpcUrl });
@@ -86,8 +86,8 @@ async function main() {
   do {
     await passOnce(opts, rpcUrl, masterKey);
     if (opts.watchMin > 0) {
-      const waitMs = opts.watchMin * 60e3 * (0.8 + Math.random() * 0.4); // ±20% — не по часам
-      console.log(`[rebalance] следующая проверка через ~${Math.round(waitMs / 60e3)} мин`);
+      const waitMs = opts.watchMin * 60e3 * (0.8 + Math.random() * 0.4); // ±20% — not on the hour
+      console.log(`[rebalance] next check in ~${Math.round(waitMs / 60e3)} min`);
       await sleep(waitMs);
     }
   } while (opts.watchMin > 0);

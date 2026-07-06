@@ -1,16 +1,16 @@
 // Zenko wallet generator.
-// Генерирует Solana-совместимый keypair (ed25519, 64-byte secret = seed||pubkey),
-// шифрует секрет мастер-ключом (scrypt -> AES-256-GCM) и кладёт в wallets/<name>.enc.json.
-// Наружу отдаётся ТОЛЬКО публичный ключ. Секрет на диск попадает только зашифрованным.
+// Generates a Solana-compatible keypair (ed25519, 64-byte secret = seed||pubkey),
+// encrypts the secret with the master key (scrypt -> AES-256-GCM) and writes wallets/<name>.enc.json.
+// ONLY the public key is returned to the outside. The secret hits disk only encrypted.
 //
-// ВАЖНО (безопасность): ключ генерируется в этом процессе, т.е. в открытом виде он
-// существовал в памяти во время создания. Такой кошелёк = "горячий", под небольшие
-// рабочие суммы для бота. Для хранения используй Phantom/hardware, где сид не покидает тебя.
+// IMPORTANT (security): the key is generated in this process, i.e. it existed in cleartext in memory
+// during creation. Such a wallet = "hot", for small working amounts for the bot. For storage use a
+// Phantom/hardware wallet where the seed never leaves you.
 //
-// Использование:
-//   ZENKO_MASTER_KEY="<твой-мастер-пароль>" node scripts/generate-wallet.js <name> [<name2> ...]
-// Если ZENKO_MASTER_KEY не задан — скрипт сгенерирует случайный мастер-ключ и напечатает
-// его ОДИН раз. Сохрани его в менеджере паролей: без него зашифрованные кошельки не открыть.
+// Usage:
+//   ZENKO_MASTER_KEY="<your-master-password>" node scripts/generate-wallet.js <name> [<name2> ...]
+// If ZENKO_MASTER_KEY is not set — the script generates a random master key and prints it ONCE.
+// Save it in a password manager: without it the encrypted wallets cannot be opened.
 
 import { randomBytes, scryptSync, createCipheriv } from 'node:crypto';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
@@ -86,9 +86,9 @@ function main() {
     console.log(`  ${r.name.padEnd(12)} pub: ${r.pubkey}`);
   }
   if (generatedMaster) {
-    console.log('\n=== MASTER KEY (сохрани, показывается один раз) ===');
+    console.log('\n=== MASTER KEY (save it, shown once) ===');
     console.log('  ' + masterKey);
-    console.log('  Без него зашифрованные кошельки не расшифровать. В git НЕ коммить.');
+    console.log('  Without it the encrypted wallets cannot be decrypted. Do NOT commit it to git.');
   }
   console.log('');
 }

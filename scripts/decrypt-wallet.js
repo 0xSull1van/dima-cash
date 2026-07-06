@@ -1,7 +1,7 @@
-// Расшифровка кошелька: ZENKO_MASTER_KEY + wallets/<name>.enc.json -> секретный ключ.
-// По умолчанию печатает ТОЛЬКО pubkey (безопасно проверить). Секрет выводит лишь с --reveal.
+// Wallet decryption: ZENKO_MASTER_KEY + wallets/<name>.enc.json -> the secret key.
+// By default prints ONLY the pubkey (safe to check). The secret is printed only with --reveal.
 //
-//   ZENKO_MASTER_KEY="..." node scripts/decrypt-wallet.js <name>            # только pubkey
+//   ZENKO_MASTER_KEY="..." node scripts/decrypt-wallet.js <name>            # pubkey only
 //   ZENKO_MASTER_KEY="..." node scripts/decrypt-wallet.js <name> --reveal   # + secret (base58 + JSON array)
 
 import { scryptSync, createDecipheriv } from 'node:crypto';

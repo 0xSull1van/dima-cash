@@ -57,14 +57,14 @@ async function bootAccount(account, index) {
   }
 
   const wallet = loadWallet(name, masterKey);
-  // sessionPath (2026-07-06): персист {token,expiresAt} на диск переживает рестарт процесса (в т.ч.
-  // авто-рестарт `node --watch` на каждой правке кода) — реальный /api/auth/login случается только
-  // когда токен реально истёк (~раз в 8ч, как у настоящего игрока), а не на каждый рестарт.
+  // sessionPath (2026-07-06): persisting {token,expiresAt} to disk survives a process restart (including
+  // the `node --watch` auto-restart on every code edit) — a real /api/auth/login happens only when the
+  // token has truly expired (~every 8h, like a real player), not on every restart.
   const client = new ZenkoClient(wallet, { proxyUrl, sessionPath: join(LOG_DIR, `session-${name}.json`) });
-  const resumed = Boolean(client.token); // восстановлен из sessionPath ДО ensureAuth — знаем, был ли реальный логин
+  const resumed = Boolean(client.token); // restored from sessionPath BEFORE ensureAuth — we know whether a real login happened
   await client.ensureAuth();
   await ensurePlayer(client, name, { log: (message) => console.log(`[boot] ${name} ${message}`) });
-  console.log(`[boot] ${name} ${wallet.address} ${resumed ? 'сессия восстановлена (без релогина)' : 'logged in'} via ${proxyLabel(proxyUrl)} tick=${jitter.tickMinSec}-${jitter.tickMaxSec}s action=${jitter.actionDelayMinMs}-${jitter.actionDelayMaxMs}ms`);
+  console.log(`[boot] ${name} ${wallet.address} ${resumed ? 'session restored (no re-login)' : 'logged in'} via ${proxyLabel(proxyUrl)} tick=${jitter.tickMinSec}-${jitter.tickMaxSec}s action=${jitter.actionDelayMinMs}-${jitter.actionDelayMaxMs}ms`);
 
   return new ZenkoBot(client, buildBotConfig({
     name,

@@ -1,5 +1,5 @@
-// Read-only аналитика по аккаунтам: холдинги, голд/гемы, скорость набора голда, стоимость в USD.
-// Ничего не покупает и не отправляет. Только логин + player/load + price.
+// Read-only per-account analytics: holdings, gold/gems, gold accumulation rate, USD value.
+// Buys nothing and sends nothing. Only login + player/load + price.
 //   $env:ZENKO_MASTER_KEY="..."; node scripts/dashboard.js            # main + spare
 //   $env:ZENKO_MASTER_KEY="..."; node scripts/dashboard.js main
 import { loadEnv, requireMasterKey } from '../src/env.js';
@@ -79,7 +79,7 @@ for (const account of accounts) {
     topLoot: summary.loot.topMaterials.map(item => `${item.name}x${item.count}`).join(', ') || 'none',
     actions: summary.recommendations,
   });
-  // без logout — чтобы не гасить сессию параллельно работающего бота
+  // no logout — so we don't kill the session of a bot running in parallel
 }
 
 console.log(`\n=== ZENKO DASHBOARD  (ZOLANA $${price ? price.toExponential(4) : '?'}) ===\n`);
