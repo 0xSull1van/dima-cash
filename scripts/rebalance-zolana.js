@@ -1,9 +1,14 @@
 // Rebalance $ZOLANA across the fleet: everyone should have ≥10k (the market gate), top up to ~12k from
-// the surplus of rich wallets (a donor never drops below 13.5k). DRY-RUN by default (plan only);
-// --execute + ZENKO_MASTER_KEY — real transfers with human pauses.
+// the surplus of rich wallets (a donor never drops below 13.5k). Only funds short accounts that actually
+// have something to sell (sellable pets or a Gold pile) — no point opening a market for an empty account.
+// DRY-RUN by default (plan only); --execute + ZENKO_MASTER_KEY — real transfers with human pauses.
 //   node scripts/rebalance-zolana.js                      # plan from live on-chain balances
 //   node scripts/rebalance-zolana.js --execute            # run the plan once
 //   node scripts/rebalance-zolana.js --execute --watch-min=360   # check every ~6h (±20%), forever
+//   node scripts/rebalance-zolana.js --no-gate            # fund every short account (ignore the "has something to sell" gate)
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadEnv, requireMasterKey } from '../src/env.js';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { DEFAULT_SOLANA_RPC, ZOLANA_MINT } from '../src/stamina.js';
@@ -12,14 +17,51 @@ import { loadWallet } from '../src/wallet.js';
 import { proxyFetchFor } from '../src/proxy-fetch.js';
 import { fundingDelayMs } from '../src/stamina-funding.js';
 import { appendLedgerEvent } from '../src/ledger.js';
+import { pickJunkCreatures } from '../src/marketplace.js';
+import { farmTradingConfig } from '../src/startup-profile.js';
 import { planZolanaRebalance, sendZolana, REBALANCE_THRESHOLD, REBALANCE_TARGET } from '../src/zolana-rebalance.js';
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+const LOG_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'logs');
+
+// The "sellable" criteria kept in sync with what the farm actually lists (junk* keys from the farm
+// profile), so the "makes sense to sell" gate counts exactly the pets the bot would put on the market.
+const JUNK_CFG = (() => {
+  const c = farmTradingConfig();
+  return {
+    junkCreatureRarities: c.junkCreatureRarities,
+    junkCreatureStages: c.junkCreatureStages,
+    junkCreatureVariants: c.junkCreatureVariants,
+    junkVariantRarityOverrides: c.junkVariantRarityOverrides,
+    junkCreatureKeepPerSpecies: c.junkCreatureKeepPerSpecies,
+    junkMinBreedCount: c.junkMinBreedCount,
+    junkSurplusKeepPerSpecies: c.junkSurplusKeepPerSpecies,
+    junkProtectLux: c.junkProtectLux,
+  };
+})();
+
+// Per-account sellable inventory from the live snapshots the farm writes (logs/live-*.json):
+// { name -> { pets, gold } }. pets = how many the farm would list right now (pickJunkCreatures);
+// gold = the account's Gold balance. Feeds the planner's "makes sense to sell" gate. Read-only.
+export function readSellableInventory(logDir = LOG_DIR) {
+  const out = {};
+  if (!existsSync(logDir)) return out;
+  for (const f of readdirSync(logDir)) {
+    if (!/^live-.*\.json$/.test(f)) continue;
+    let live; try { live = JSON.parse(readFileSync(join(logDir, f), 'utf8')); } catch { continue; }
+    if (!live?.name) continue;
+    const pets = pickJunkCreatures(live.creaturesList || [], JUNK_CFG).length;
+    const gold = Number(live.player?.gold) || 0;
+    out[live.name] = { pets, gold };
+  }
+  return out;
+}
 
 function parseArgs(argv) {
-  const o = { execute: false, watchMin: 0, threshold: REBALANCE_THRESHOLD, target: REBALANCE_TARGET };
+  const o = { execute: false, watchMin: 0, threshold: REBALANCE_THRESHOLD, target: REBALANCE_TARGET, gate: true };
   for (const a of argv) {
     if (a === '--execute') o.execute = true;
+    else if (a === '--no-gate') o.gate = false; // fund every short account, even with nothing to sell
     else if (a.startsWith('--watch-min=')) o.watchMin = Number(a.split('=')[1]) || 0;
     else if (a.startsWith('--threshold=')) o.threshold = Number(a.split('=')[1]) || o.threshold;
     else if (a.startsWith('--target=')) o.target = Number(a.split('=')[1]) || o.target;
@@ -52,9 +94,18 @@ async function passOnce(opts, rpcUrl, masterKey) {
     console.log(`  ${a.name.padEnd(10)} ${Math.round(zolana)}`);
   }
 
-  const plan = planZolanaRebalance(balances, { threshold: opts.threshold, target: opts.target });
+  const inventory = readSellableInventory(LOG_DIR);
+  const plan = planZolanaRebalance(balances, {
+    threshold: opts.threshold,
+    target: opts.target,
+    sellableByName: opts.gate ? inventory : null, // gate on "has something to sell" unless --no-gate
+  });
+  if (plan.skipped?.length) {
+    console.log(`[rebalance] skipped ${plan.skipped.length} short acct(s) with nothing to sell: ${plan.skipped.map(s => s.name).join(', ')}`);
+  }
   if (!plan.transfers.length) {
-    console.log(`[rebalance] all ≥ ${opts.threshold} — no transfers needed${plan.unmet.length ? ` (unmet: ${JSON.stringify(plan.unmet)})` : ''}`);
+    const waiting = plan.recipients?.length ? ` — ${plan.recipients.length} acct(s) under the gate wait for a donor: ${plan.recipients.join(', ')}` : '';
+    console.log(`[rebalance] no transfers${plan.donors.length ? '' : ' (no donor above the floor yet)'}${waiting}${plan.unmet.length ? ` (unmet: ${JSON.stringify(plan.unmet)})` : ''}`);
     return;
   }
   console.log('[rebalance] plan:');

@@ -15,6 +15,12 @@ export function parseSystemArgs(argv = []) {
     executeFunding: false,
     sweepLive: false,
     watch: true,
+    // Auto-rebalance $ZOLANA between playing wallets so short accounts cross the 10k market gate and can
+    // sell pets. Opt-in (--rebalance). This keeps ZOLANA INSIDE the playing set (unlike sweep, which
+    // moves it OUT to a collection wallet — still refused above), so it doesn't violate "playing wallets
+    // retain ZOLANA". Only funds accounts that actually have something to sell (see rebalance-zolana.js).
+    rebalance: false,
+    rebalanceMin: 20, // how often to re-check balances (minutes, ±20% jitter inside the script)
     extraBotArgs: [],
   };
   let hasAccountSelector = false;
@@ -22,6 +28,14 @@ export function parseSystemArgs(argv = []) {
   for (const arg of argv) {
     if (arg === '--sweep-live' || arg === '--sweep' || arg === '--withdraw-live') {
       throw new Error('live sweep is not supported by system startup; playing wallets retain ZOLANA');
+    }
+    if (arg === '--rebalance') {
+      opts.rebalance = true;
+      continue;
+    }
+    if (arg.startsWith('--rebalance-min=')) {
+      opts.rebalanceMin = Number(arg.split('=')[1]) || opts.rebalanceMin;
+      continue;
     }
     if (arg === '--bot') {
       opts.mode = 'bot';
@@ -97,6 +111,18 @@ export function buildSystemProcesses(opts = parseSystemArgs()) {
     command: process.execPath,
     args: [...nodeArgs, ...opts.extraBotArgs],
   });
+
+  // Opt-in auto-rebalancer: continuously moves surplus $ZOLANA to short accounts that have pets to sell,
+  // so they cross the 10k market gate. --execute (real transfers) + a watch interval; requires
+  // ZENKO_MASTER_KEY (already required by the farm above). Not under --watch: it's a long-lived poller,
+  // not something a code edit should restart mid-transfer.
+  if (opts.rebalance) {
+    processes.push({
+      name: 'rebalance',
+      command: process.execPath,
+      args: ['scripts/rebalance-zolana.js', '--execute', `--watch-min=${opts.rebalanceMin}`],
+    });
+  }
   return processes;
 }
 

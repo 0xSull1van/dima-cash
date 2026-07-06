@@ -58,3 +58,22 @@ test('--no-watch opts the farm process out of auto-restart', () => {
 test('parseSystemArgs rejects live sweep because playing wallets retain ZOLANA', () => {
   assert.throws(() => parseSystemArgs(['--sweep-live']), /not supported/i);
 });
+
+test('--rebalance adds an opt-in auto-rebalancer process; off by default', () => {
+  // default: no rebalance process
+  const off = buildSystemProcesses(parseSystemArgs(['--all']));
+  assert.equal(off.some((p) => p.name === 'rebalance'), false);
+  assert.equal(JSON.stringify(off).includes('rebalance-zolana.js'), false);
+
+  // opt-in: adds a rebalance child running --execute with the watch interval
+  const opts = parseSystemArgs(['--all', '--rebalance', '--rebalance-min=15']);
+  assert.equal(opts.rebalance, true);
+  assert.equal(opts.rebalanceMin, 15);
+  assert.equal(opts.extraBotArgs.includes('--rebalance'), false, '--rebalance must not leak into the farm script args');
+  assert.equal(opts.extraBotArgs.includes('--rebalance-min=15'), false);
+
+  const processes = buildSystemProcesses(opts);
+  const reb = processes.find((p) => p.name === 'rebalance');
+  assert.ok(reb, 'rebalance process present when --rebalance passed');
+  assert.deepEqual(reb.args, ['scripts/rebalance-zolana.js', '--execute', '--watch-min=15']);
+});

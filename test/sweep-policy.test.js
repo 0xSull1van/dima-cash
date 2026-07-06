@@ -106,38 +106,76 @@ test('parses env sweep policy without making live mode env-configurable', () => 
   });
 });
 
-// ── Ребаланс ZOLANA 2026-07-06 (owner: «у всех +- 12000 всегда, ниже 10k — пусть поделится другой»)
+// ── ZOLANA rebalance 2026-07-06 (owner: "everyone always at ~12000; below 10k, let another account share")
 import { planZolanaRebalance } from '../src/zolana-rebalance.js';
 
-test('planZolanaRebalance: доноры закрывают нужды, донор не падает ниже floor, суммы некруглые', () => {
+test('planZolanaRebalance: donors cover needs, a donor stays above the floor, amounts are non-round', () => {
   const rng = () => 0.5;
   const plan = planZolanaRebalance([
     { name: 'rich', address: 'R1', zolana: 21_000 },   // avail = 21000-13500 = 7500
-    { name: 'mid', address: 'M1', zolana: 12_500 },    // не донор (ниже floor) и не получатель
+    { name: 'mid', address: 'M1', zolana: 12_500 },    // neither a donor (below the floor) nor a recipient
     { name: 'poor', address: 'P1', zolana: 8_000 },    // need ≈ (12000-8000)×1.02 + 8 ≈ 4088
   ], { rng });
   assert.equal(plan.transfers.length, 1);
   const t = plan.transfers[0];
   assert.equal(t.from, 'rich'); assert.equal(t.to, 'poor');
-  assert.ok(t.amount >= 4000 && t.amount <= 4300, `need с джиттером (got ${t.amount})`);
-  assert.ok(t.amount % 100 !== 0, 'некруглая сумма');
+  assert.ok(t.amount >= 4000 && t.amount <= 4300, `need with jitter (got ${t.amount})`);
+  assert.ok(t.amount % 100 !== 0, 'non-round amount');
   assert.equal(plan.unmet.length, 0);
 });
 
-test('planZolanaRebalance: доноров не хватает → unmet, богатый не осушается ниже floor', () => {
+test('planZolanaRebalance: not enough donors → unmet, the rich one is not drained below the floor', () => {
   const rng = () => 0;
   const plan = planZolanaRebalance([
-    { name: 'rich', address: 'R1', zolana: 14_000 },   // avail всего 500
+    { name: 'rich', address: 'R1', zolana: 14_000 },   // avail only 500
     { name: 'poor1', address: 'P1', zolana: 5_000 },   // need 7000
   ], { rng });
   assert.equal(plan.transfers.length, 1);
-  assert.equal(plan.transfers[0].amount, 500, 'донор отдаёт только излишек над floor');
+  assert.equal(plan.transfers[0].amount, 500, 'a donor gives only the surplus above the floor');
   assert.equal(plan.unmet.length, 1);
   assert.ok(plan.unmet[0].short >= 6500);
 });
 
-test('planZolanaRebalance: все ≥ threshold → пустой план; сам себе не переводит', () => {
+test('planZolanaRebalance: all ≥ threshold → empty plan; never transfers to itself', () => {
   assert.equal(planZolanaRebalance([
     { name: 'a', address: 'A', zolana: 15000 }, { name: 'b', address: 'B', zolana: 11000 },
   ]).transfers.length, 0);
+});
+
+// "Makes sense to sell" gate (2026-07-06): only fund short accounts that have something to list.
+test('planZolanaRebalance: gate funds short accounts WITH sellable pets, skips empty ones', () => {
+  const rng = () => 0;
+  const plan = planZolanaRebalance([
+    { name: 'rich', address: 'R1', zolana: 30_000 },   // donor, avail 16500
+    { name: 'seller', address: 'S1', zolana: 8_000 },  // short + has pets → funded
+    { name: 'empty', address: 'E1', zolana: 8_000 },   // short + nothing to sell → skipped
+  ], {
+    rng,
+    sellableByName: { seller: { pets: 5, gold: 0 }, empty: { pets: 0, gold: 0 } },
+  });
+  assert.deepEqual(plan.transfers.map(t => t.to), ['seller'], 'only the account with pets is funded');
+  assert.deepEqual(plan.skipped.map(s => s.name), ['empty'], 'the empty account is skipped with a reason');
+  assert.ok(plan.skipped[0].reason.includes('nothing to sell'));
+});
+
+test('planZolanaRebalance: gate also funds a short account sitting on a Gold pile (no pets)', () => {
+  const plan = planZolanaRebalance([
+    { name: 'rich', address: 'R1', zolana: 30_000 },
+    { name: 'goldbag', address: 'G1', zolana: 9_000 }, // no pets but 400k gold → funded
+  ], {
+    rng: () => 0,
+    sellableByName: { goldbag: { pets: 0, gold: 400_000 } },
+    minSellableGold: 100_000,
+  });
+  assert.deepEqual(plan.transfers.map(t => t.to), ['goldbag']);
+  assert.equal(plan.skipped.length, 0);
+});
+
+test('planZolanaRebalance: no sellableByName → gate OFF (backward compatible, funds all short)', () => {
+  const plan = planZolanaRebalance([
+    { name: 'rich', address: 'R1', zolana: 30_000 },
+    { name: 'unknown', address: 'U1', zolana: 8_000 }, // no inventory data → still funded
+  ], { rng: () => 0 });
+  assert.deepEqual(plan.transfers.map(t => t.to), ['unknown']);
+  assert.equal(plan.skipped.length, 0);
 });

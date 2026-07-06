@@ -20,22 +20,51 @@ export const REBALANCE_THRESHOLD = 10_000; // below → market gate closed, acco
 export const REBALANCE_TARGET = 12_000;    // top up to this level ("everyone at ~12000")
 export const REBALANCE_DONOR_FLOOR = 13_500; // a donor never drops below this (target + stamina buffer)
 
+export const REBALANCE_MIN_SELLABLE_PETS = 1;      // "makes sense to sell" gate: at least this many sellable pets…
+export const REBALANCE_MIN_SELLABLE_GOLD = 100_000; // …OR at least this much Gold (one cashout lot) worth trading
+
 // Pure planner: who's short and who shares. accounts: [{name, address, zolana}].
 // Greedy: the richest donor covers the largest need; amounts jittered +0..4% with a non-round
-// tail (not exactly 12000 for everyone — more human). Returns {transfers, unmet}.
+// tail (not exactly 12000 for everyone — more human).
+//
+// "Makes sense to sell" gate (2026-07-06, owner: "transfer to accounts that are short on trading funds
+// AND where it makes sense to sell"): only fund a short account that actually has something to list —
+// otherwise we'd spend real ZOLANA opening a market for an account with nothing to sell. Pass
+// `sellableByName` (a name -> { pets, gold } map, or a Map) built from live snapshots; a recipient
+// qualifies if it has ≥ minSellablePets sellable pets OR ≥ minSellableGold Gold. When `sellableByName` is
+// null (not provided), the gate is OFF and every short account qualifies (old behavior). Short accounts
+// that don't qualify are returned in `skipped` (with the reason) so the caller can log why they weren't funded.
+// Returns { transfers, unmet, skipped, donors, recipients }.
 export function planZolanaRebalance(accounts = [], {
   threshold = REBALANCE_THRESHOLD,
   target = REBALANCE_TARGET,
   donorFloor = REBALANCE_DONOR_FLOOR,
   rng = Math.random,
+  sellableByName = null,
+  minSellablePets = REBALANCE_MIN_SELLABLE_PETS,
+  minSellableGold = REBALANCE_MIN_SELLABLE_GOLD,
 } = {}) {
   const valid = (accounts || []).filter(a => a && a.name && a.address && Number.isFinite(Number(a.zolana)));
+  const getInv = (name) => {
+    if (!sellableByName) return null; // gate off
+    return (sellableByName instanceof Map ? sellableByName.get(name) : sellableByName[name]) || { pets: 0, gold: 0 };
+  };
+  const qualifies = (name) => {
+    const inv = getInv(name);
+    if (inv == null) return true; // no inventory data supplied → gate off, fund all short (old behavior)
+    return (Number(inv.pets) || 0) >= minSellablePets || (Number(inv.gold) || 0) >= minSellableGold;
+  };
+
   const donors = valid
     .filter(a => Number(a.zolana) > donorFloor)
     .map(a => ({ ...a, avail: Number(a.zolana) - donorFloor }))
     .sort((x, y) => y.avail - x.avail);
-  const needs = valid
-    .filter(a => Number(a.zolana) < threshold)
+  const short = valid.filter(a => Number(a.zolana) < threshold);
+  const skipped = short
+    .filter(a => !qualifies(a.name))
+    .map(a => ({ name: a.name, reason: 'nothing to sell (no sellable pets, no Gold surplus)' }));
+  const needs = short
+    .filter(a => qualifies(a.name))
     .map(a => {
       const base = target - Number(a.zolana);
       // jitter up + non-round tail: the recipient lands at 12k..12.5k+, not exactly on target
@@ -59,7 +88,7 @@ export function planZolanaRebalance(accounts = [], {
     }
     if (remaining > 0) unmet.push({ name: r.name, short: remaining });
   }
-  return { transfers, unmet, donors: donors.map(d => d.name), recipients: needs.map(n => n.name) };
+  return { transfers, unmet, skipped, donors: donors.map(d => d.name), recipients: needs.map(n => n.name) };
 }
 
 // Generic SPL ZOLANA transfer (same path as the production createStaminaRefillPayment, but the

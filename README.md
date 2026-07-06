@@ -162,6 +162,25 @@ npm run web                      # dashboard only
 `--working` starts only accounts with an existing `logs/live-*.json` snapshot; `--all` boots (and, with
 `--execute`, funds) every registered account.
 
+### Auto-rebalance (open the market on short accounts)
+
+The marketplace requires holding ≥ 10,000 $ZOLANA to list. Accounts below that gate can't sell their
+pets. `--rebalance` adds a background poller that moves **surplus** $ZOLANA (from wallets above the
+13.5k donor floor) to short accounts **that actually have something to sell** — no point funding an
+empty account. It keeps $ZOLANA *inside* the playing set (unlike a sweep, which pulls it out).
+
+```bash
+npm run system -- --rebalance                 # farm + dashboard + auto-rebalance (real transfers)
+npm run system -- --rebalance --rebalance-min=15   # re-check every ~15 min (±20% jitter)
+npm run rebalance                             # one-off DRY-RUN: print the plan, send nothing
+npm run rebalance -- --execute --watch-min=20 # standalone poller (real transfers), no farm
+```
+
+The planner never drains a donor below the floor, uses non-round amounts + human pauses, and only funds
+accounts with sellable pets or a Gold pile (`--no-gate` overrides). It needs `ZENKO_MASTER_KEY` set (same
+as the farm). If no wallet is above the donor floor yet, it stays idle and funds accounts automatically
+as sellers accumulate surplus.
+
 ---
 
 ## Scripts
@@ -176,7 +195,7 @@ npm run web                      # dashboard only
 | `npm run gen-wallet` | Generates a single encrypted wallet |
 | `npm run accounts` | Lists accounts / deposit addresses (`--private-keys` to reveal, needs master key) |
 | `npm run fund-stamina` | Swaps SOL → $ZOLANA via Jupiter to fund accounts |
-| `npm run rebalance` | Rebalances $ZOLANA across the fleet |
+| `npm run rebalance` | Rebalances $ZOLANA across the fleet (dry-run; `-- --execute` to send) |
 | `npm run bootstrap` | Creates the in-game player for a wallet |
 | `npm run market-smoke` | Read-only marketplace API probe |
 
