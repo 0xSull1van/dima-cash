@@ -39,7 +39,9 @@ export function parseListings(json) {
     status: l.status ?? l.state ?? l.listing_status ?? l.listingStatus ?? null,
     listedAt: l.created_at ?? l.createdAt ?? l.listed_at ?? l.listedAt ?? l.updated_at ?? l.updatedAt ?? null,
     rarity: l.rarity ?? l.item?.rarity ?? null,
+    variant: l.variant ?? l.item?.variant ?? null, // was missing — the per-rarity/species ask filters need it to exclude special variants
     element: l.element ?? l.item?.element ?? null,
+    species: marketSpeciesOf(l),
   }));
 }
 
@@ -106,6 +108,21 @@ function isFleetOwned(row, fleet) {
 // only the rarities that had sales. sales — array from parseSales(); price_usd → ZOLANA by
 // dividing by the live token price. Our own fleet's sales are excluded (fleetWallets) — a "market" price.
 const RARITY_KEYS = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythical'];
+
+// Species of a market row (sale or listing). The market shape nests the creature under `item` (see
+// NOTES.md — parseListings already reads `l.item?.rarity`), so species most likely lives at `item.species`.
+// We extract defensively across every plausible field name — if the live API names it differently, one
+// of these paths still catches it; if species is truly absent, this returns '' and the per-species metrics
+// stay empty and the pricing falls back to rarity (no regression). Confirm the real field with
+// `node scripts/probe-market.js` (it dumps a raw creature row).
+export function marketSpeciesOf(row) {
+  return lower(
+    row?.species ?? row?.item?.species
+    ?? row?.creature_id ?? row?.creatureId ?? row?.item?.creature_id ?? row?.item?.creatureId
+    ?? row?.name ?? row?.item?.name ?? '',
+  );
+}
+
 export function parseSales(json) {
   const arr = Array.isArray(json?.sales) ? json.sales : Array.isArray(json) ? json : [];
   return arr.map((s) => ({
@@ -114,6 +131,7 @@ export function parseSales(json) {
     currency: lower(s.currency ?? 'zenko'),
     rarity: lower(s.rarity ?? s.item?.rarity ?? ''),
     variant: lower(s.variant ?? s.item?.variant ?? ''),
+    species: marketSpeciesOf(s),
     seller: s.seller ?? s.seller_wallet ?? null,
     soldAt: s.sold_at ?? s.soldAt ?? s.created_at ?? null,
   }));
@@ -189,6 +207,62 @@ export function creatureAsksByRarity(rows, { fleetWallets } = {}) {
     if (!RARITY_KEYS.includes(rar)) continue;
     if (r.variant && lower(r.variant) !== 'normal') continue;
     const slot = out[rar] || (out[rar] = { external: null, fleet: null });
+    const key = isFleetOwned(r, fleet) ? 'fleet' : 'external';
+    if (slot[key] == null || r.priceUsd < slot[key]) slot[key] = r.priceUsd;
+  }
+  return out;
+}
+
+// ── Per-SPECIES market metrics (2026-07-06, owner: "the ideal price should be parsed from the market
+// metrics of every pet species"). The rarity-level model above prices every creature of a rarity the
+// same; but different species of one rarity can clear at different prices. These collect the same signals
+// at species granularity so pricing can use the market for THAT species, falling back to rarity when a
+// species has too few sales (thin market). Normal-variant only (special variants priced via override).
+// Rows without a species field don't contribute here (they still feed the rarity metrics) — see marketSpeciesOf.
+
+// Per-species metrics from real recent sales: { [species]: { rarity, floorUsd, clearingUsd, count } }.
+// floorUsd = min sale, clearingUsd = MEDIAN sale ("the price it actually clears at"), count = #sales.
+export function creatureMetricsBySpecies(sales, { fleetWallets } = {}) {
+  const fleet = toWalletSet(fleetWallets);
+  const bySp = new Map(); // species -> { rarity, prices: [] }
+  for (const s of sales || []) {
+    if (s.itemKind !== 'creature' || s.currency === 'gems') continue;
+    if (!(s.priceUsd > 0)) continue;
+    if (s.seller != null && fleet.has(String(s.seller))) continue; // exclude our own sales — a "market" price
+    if (s.variant && s.variant !== 'normal') continue;
+    const sp = s.species;
+    if (!sp) continue;
+    const e = bySp.get(sp) || { rarity: RARITY_KEYS.includes(s.rarity) ? s.rarity : null, prices: [] };
+    if (!e.rarity && RARITY_KEYS.includes(s.rarity)) e.rarity = s.rarity;
+    e.prices.push(s.priceUsd);
+    bySp.set(sp, e);
+  }
+  const out = {};
+  for (const [sp, e] of bySp) {
+    const a = e.prices.slice().sort((x, y) => x - y);
+    const mid = a.length >> 1;
+    out[sp] = {
+      rarity: e.rarity,
+      floorUsd: a[0],
+      clearingUsd: a.length % 2 ? a[mid] : (a[mid - 1] + a[mid]) / 2,
+      count: a.length,
+    };
+  }
+  return out;
+}
+
+// Min asks by species from browse: { [species]: { external, fleet } } — the species analogue of
+// creatureAsksByRarity. Never undercut our own fleet ask for a species (ladder against self-dumping).
+export function creatureAsksBySpecies(rows, { fleetWallets } = {}) {
+  const fleet = toWalletSet(fleetWallets);
+  const out = {};
+  for (const r of rows || []) {
+    if (lower(r.itemKind) !== 'creature' || lower(r.currency || 'zenko') !== 'zenko') continue;
+    if (!(r.priceUsd > 0)) continue;
+    if (r.variant && lower(r.variant) !== 'normal') continue;
+    const sp = lower(r.species ?? '');
+    if (!sp) continue;
+    const slot = out[sp] || (out[sp] = { external: null, fleet: null });
     const key = isFleetOwned(r, fleet) ? 'fleet' : 'external';
     if (slot[key] == null || r.priceUsd < slot[key]) slot[key] = r.priceUsd;
   }
@@ -323,6 +397,66 @@ export function planOrganicPrice({ floorUsd, jitterPct = 0, undercutMin = 0, und
   }
   const priceUsd = Math.max(Number(minPriceUsd) || 0.01, Math.round(floorUsd * factor * 100) / 100);
   return { priceUsd, jitterPct: Math.max(0, Number(jitterPct) || 0), undercutMin: uMin, undercutMax: uMax, floorUsd };
+}
+
+// The IDEAL listing price (USD) for one creature — parsed from market metrics at SPECIES granularity
+// first, then rarity, then a seed floor (2026-07-06, owner: "the ideal price should be parsed from the
+// market metrics of every pet species"). Waterfall, most-specific first:
+//   1) explicit (rarity,variant) override — special variants (Rainbow/Golden/…) price on their own.
+//   2) SPECIES demand: the median of THIS species' real recent sales (clearing = "the price it actually
+//      clears at"), used only with ≥ minSamples sales; else just below its lowest external ask. Never
+//      below our own fleet ask for the species (ladder against self-dumping). Else the species floor.
+//   3) RARITY demand: the same model at rarity granularity — the previous behavior, the fallback when the
+//      species has too few/no sales (thin market: most species trade rarely).
+//   4) rarity floor / manual seed (creatureFloorUsdForRarity) via planOrganicPrice.
+// Returns { priceUsd, source } (source names which rung fired, for logs/telemetry) or null when there's
+// no usable signal at all. `metricsBySpecies`/`asksBySpecies` come from creatureMetricsBySpecies /
+// creatureAsksBySpecies; `clearingUsdByRarity`/`asksByRarity` are the rarity-level fallbacks.
+export function creatureIdealPriceUsd({
+  species, rarity, variant = null,
+  metricsBySpecies = {}, asksBySpecies = {},
+  clearingUsdByRarity = {}, asksByRarity = {},
+  floorZolanaByRarity = {}, zolanaPriceUsd = null,
+  cfg = {}, rng = Math.random,
+} = {}) {
+  const rar = lower(rarity);
+  const sp = lower(species);
+  const jitterPct = cfg.cashoutPriceJitterPct;
+  const askUndercutPct = cfg.cashoutAskUndercutPct;
+  const minPriceUsd = cfg.cashoutMinPriceUsd;
+  const minSamples = Math.max(1, Number(cfg.cashoutSpeciesMinSamples ?? 2));
+
+  // 1) explicit (rarity,variant) override wins over everything (special variants)
+  if (variant != null) {
+    const override = CREATURE_VARIANT_PRICE_OVERRIDE_USD[`${rar}:${lower(variant)}`];
+    if (override != null) return { priceUsd: override, source: 'variant-override' };
+  }
+
+  // 2) species demand — the finest, most accurate signal
+  const spm = sp ? metricsBySpecies[sp] : null;
+  const spa = (sp && asksBySpecies[sp]) || {};
+  if (spm) {
+    const speciesClearing = (spm.count >= minSamples) ? spm.clearingUsd : null; // one sale is a weak median
+    const plan = planDemandPrice({ clearingUsd: speciesClearing, lowestAskUsd: spa.external, fleetAskUsd: spa.fleet, askUndercutPct, jitterPct, minPriceUsd, rng });
+    if (plan) return { priceUsd: plan.priceUsd, source: plan.source === 'clearing' ? 'species-clearing' : 'species-ask' };
+    if (spm.floorUsd > 0) { // sub-minSamples and no ask → the species' own floor is still better than rarity
+      const org = planOrganicPrice({ floorUsd: spm.floorUsd, jitterPct, minPriceUsd, rng });
+      if (org) return { priceUsd: org.priceUsd, source: 'species-floor' };
+    }
+  }
+
+  // 3) rarity demand — the previous behavior, the fallback for thin/never-traded species
+  const ra = asksByRarity[rar] || {};
+  const rarPlan = planDemandPrice({ clearingUsd: clearingUsdByRarity[rar], lowestAskUsd: ra.external, fleetAskUsd: ra.fleet, askUndercutPct, jitterPct, minPriceUsd, rng });
+  if (rarPlan) return { priceUsd: rarPlan.priceUsd, source: rarPlan.source === 'clearing' ? 'rarity-clearing' : 'rarity-ask' };
+
+  // 4) seed floor (live per-rarity floor from sales, else the manual rarity seed)
+  const floorUsd = creatureFloorUsdForRarity(rarity, floorZolanaByRarity, zolanaPriceUsd, variant);
+  if (floorUsd > 0) {
+    const org = planOrganicPrice({ floorUsd, jitterPct, minPriceUsd, rng });
+    if (org) return { priceUsd: org.priceUsd, source: 'seed' };
+  }
+  return null;
 }
 
 // Minimum per-unit USD among $ZOLANA-lane ('zenko') gold listings; null if none.
@@ -848,6 +982,7 @@ export async function getCreatureFloorAndVolumeByRarity(client, { zolanaPriceUsd
     floors: creatureFloorZolanaByRarity(sales, { zolanaPriceUsd, fleetWallets }),
     counts: salesCountByRarity(sales, { fleetWallets }),
     clearingUsd: creatureClearingUsdByRarity(sales, { fleetWallets }), // median of real sales — the demand-price base
+    metricsBySpecies: creatureMetricsBySpecies(sales, { fleetWallets }), // per-species floor/clearing/count — the ideal-price base
     velocity: salesVelocityPerHour(sales, { fleetWallets }),           // market pulse — the adaptive listing pace
   };
 }

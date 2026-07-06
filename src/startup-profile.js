@@ -92,6 +92,10 @@ export function farmTradingConfig(overrides = {}) {
     cashoutUndercutPctMin: 0,
     cashoutUndercutPctMax: 0,
     cashoutDemandPricing: true,
+    // Ideal price is parsed per SPECIES first (median of that species' real sales), falling back to
+    // rarity then seed — see creatureIdealPriceUsd. Trust a species' median only with ≥2 real sales;
+    // below that the market is too thin for that species and we use its floor, then the rarity signal.
+    cashoutSpeciesMinSamples: 2,
     cashoutAskUndercutPct: 0.05,
     cashoutRepriceDecayPct: 0.12,
     cashoutMinPriceUsd: 0.01,

@@ -16,6 +16,7 @@
     "dashboard": "node scripts/dashboard.js",
     "web": "node scripts/serve-dashboard.js",
     "market-smoke": "node scripts/market-smoke.js",
+    "probe-species": "node scripts/probe-species.js",
     "rebalance": "node scripts/rebalance-zolana.js"
   },
   "dependencies": {

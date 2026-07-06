@@ -198,6 +198,7 @@ as sellers accumulate surplus.
 | `npm run rebalance` | Rebalances $ZOLANA across the fleet (dry-run; `-- --execute` to send) |
 | `npm run bootstrap` | Creates the in-game player for a wallet |
 | `npm run market-smoke` | Read-only marketplace API probe |
+| `npm run probe-species` | Read-only: confirm the market `species` field + show per-species metrics & ideal prices |
 
 ---
 
@@ -216,6 +217,7 @@ per-account via `readLiveStrategy`. Key knobs:
 | `autoBreedingPipeline`, `vaultBreedingPoolTarget` | Dedicated in-vault breeding "nursery" |
 | `autoSellGold`, `cashoutGoldSellTrigger` | Gold cash-out hysteresis (accumulate, then drip-sell) |
 | `cashoutDemandPricing` | Price at the median of real recent sales, don't undercut your own fleet |
+| `cashoutSpeciesMinSamples` | Ideal price is parsed **per species** first (median of that species' sales), then rarity, then seed |
 | `autoBuyStamina` | **Opt-in.** On-chain $ZOLANA burn to refill stamina |
 | `tickMin/MaxSec`, `actionDelayMin/MaxMs` | Human-timing envelope (set per-account from jitter) |
 

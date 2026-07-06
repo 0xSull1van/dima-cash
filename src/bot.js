@@ -44,6 +44,8 @@ import {
   getMarketFloorUsd,
   getCreatureFloorAndVolumeByRarity,
   creatureFloorUsdForRarity,
+  creatureIdealPriceUsd,
+  creatureAsksBySpecies,
   getMyListings,
   getMyGoldListings,
   getMySales,
@@ -222,6 +224,7 @@ export class ZenkoBot {
       // Demand model (2026-07-06, evening — replaces the −25..35% dump): price = the median of real sales
       // (clearing) → a bit below the min external ask → seed; don't undercut our own fleet ask (a ladder).
       cashoutDemandPricing: false,
+      cashoutSpeciesMinSamples: 2,     // trust a species' median (clearing) only with ≥ this many real sales; fewer → fall back to its floor, then rarity
       cashoutAskUndercutPct: 0.05,     // no sales in the window: our ask = external min × (1−this)
       cashoutRepriceDecayPct: 0,       // >0: a stale lot cheapens in steps ×(1−decay) from the CURRENT price
       // Adaptive listing pace from the market pulse (see planListingPace / salesVelocityPerHour)
@@ -340,6 +343,7 @@ export class ZenkoBot {
     this.petValueHistory = []; // [{t, zolana: unbound-sellable, all: mark-to-market}] for pet-value ZOLANA/h
     this.priceUsd = null;
     this.creatureFloorZolana = {};   // creature floor by rarity in $ZOLANA (real sales), for the dashboard
+    this.creatureMetricsBySpecies = {}; // per-species {rarity, floorUsd, clearingUsd, count} — the ideal-price base
     this.nextFloorAt = 0;            // throttle for collecting the market floor
     // cashout state: plateau tracking + human cadence + ledgered-sale dedupe
     this.lastCeiling = this.depthCeiling;
@@ -647,9 +651,13 @@ export class ZenkoBot {
       let floorsForSnapshot = null, countsForSnapshot = {};
       try {
         if (!this.priceUsd) { try { this.priceUsd = (await this.c.api('/api/price')).zolanaPriceUsd; } catch {} }
-        const { floors, counts, clearingUsd, velocity } = await getCreatureFloorAndVolumeByRarity(this.c, { zolanaPriceUsd: this.priceUsd, fleetWallets: this.cfg.fleetWallets });
+        const { floors, counts, clearingUsd, metricsBySpecies, velocity } = await getCreatureFloorAndVolumeByRarity(this.c, { zolanaPriceUsd: this.priceUsd, fleetWallets: this.cfg.fleetWallets });
         // clearing (median of real sales, USD) — merge over last-known-good, like floors below
         if (clearingUsd && Object.keys(clearingUsd).length) this.creatureClearingUsd = { ...(this.creatureClearingUsd || {}), ...clearingUsd };
+        // per-species metrics (floor/clearing/count) — merge over last-known-good too: the thin market
+        // rarely has a sale of every species per window, so replacing wholesale would drop a species'
+        // ideal price to nothing the moment it had no sale this poll (same reasoning as floors below).
+        if (metricsBySpecies && Object.keys(metricsBySpecies).length) this.creatureMetricsBySpecies = { ...(this.creatureMetricsBySpecies || {}), ...metricsBySpecies };
         if (velocity) this.marketVelocity = velocity; // market pulse (sales/hour) — sets the listing pace
         // MERGE, don't replace: the market is thin — the recent-sales window often does NOT contain sales of
         // some rarity, then getCreatureFloorAndVolumeByRarity won't return it. Replacing wholesale dropped its
@@ -1343,33 +1351,33 @@ export class ZenkoBot {
     // clear price, NOT one seller with a floor−ε wall (a tell + a self-dump spiral).
     // Our own listings aren't in the floor (fleetWallets). Relics — via the previous planUniqueFloorListing.
     let priceUsd;
+    let priceSource = null;
     if (itemKind === 'creature' && this.cfg.cashoutDemandPricing) {
-      // Demand model (2026-07-06, owner: "prices people buy at, don't dump on each other"): the base is the
-      // median of real external sales of this rarity (collected with the floor once per 10 min); if there
-      // are no sales in the window — stand just below the cheapest EXTERNAL ask (browse on the spot, one call
-      // per listing — an 8-25 min cooldown, human); never undercut our own fleet ask (a ladder). None of the
-      // three signals present → the floorUsd path below (seed).
-      const rar = String(item?.rarity || '').toLowerCase();
-      let asks = {};
-      try {
-        const raw = await this.c.api('/api/market/browse?kind=creature');
-        asks = creatureAsksByRarity(parseListings(raw), { fleetWallets: this.cfg.fleetWallets })[rar] || {};
-      } catch { /* browse unavailable — the asks signal is just empty */ }
-      const plan = planDemandPrice({
-        clearingUsd: (this.creatureClearingUsd || {})[rar],
-        lowestAskUsd: asks.external,
-        fleetAskUsd: asks.fleet,
-        askUndercutPct: this.cfg.cashoutAskUndercutPct,
-        jitterPct: this.cfg.cashoutPriceJitterPct,
-        minPriceUsd: this.cfg.cashoutMinPriceUsd,
+      // Ideal price parsed SPECIES-first (2026-07-06, owner: "the ideal price should be parsed from the
+      // market metrics of every pet species"): creatureIdealPriceUsd walks species clearing (median of THIS
+      // species' real sales, collected with the floor once per 10 min) → its lowest external ask → the same
+      // at rarity granularity (previous behavior) → the seed floor. Never undercuts our own fleet ask. One
+      // browse call per listing feeds the live ask signals (human cadence via the cooldown below).
+      let listingRows = [];
+      try { listingRows = parseListings(await this.c.api('/api/market/browse?kind=creature')); }
+      catch { /* browse unavailable — ask signals just empty; clearing/floor still price it */ }
+      const mkOpts = { fleetWallets: this.cfg.fleetWallets };
+      const ideal = creatureIdealPriceUsd({
+        species: item?.species ?? item?.creature_id,
+        rarity: item?.rarity,
+        variant: item?.variant,
+        metricsBySpecies: this.creatureMetricsBySpecies || {},
+        asksBySpecies: creatureAsksBySpecies(listingRows, mkOpts),
+        clearingUsdByRarity: this.creatureClearingUsd || {},
+        asksByRarity: creatureAsksByRarity(listingRows, mkOpts),
+        floorZolanaByRarity: this.creatureFloorZolana || {},
+        zolanaPriceUsd: this.priceUsd,
+        cfg: this.cfg,
         rng: this.rng,
       });
-      priceUsd = plan ? plan.priceUsd : null;
-      if (priceUsd == null) {
-        const fallback = planOrganicPrice({ floorUsd, jitterPct: this.cfg.cashoutPriceJitterPct, minPriceUsd: this.cfg.cashoutMinPriceUsd, rng: this.rng });
-        if (!fallback) return false;
-        priceUsd = fallback.priceUsd;
-      }
+      if (!ideal) return false;
+      priceUsd = ideal.priceUsd;
+      priceSource = ideal.source;
     } else if (itemKind === 'creature') {
       const plan = planOrganicPrice({
         floorUsd,
@@ -1419,7 +1427,8 @@ export class ZenkoBot {
         meta: { priceUsd, floorUsd, currency: 'zenko' },
       });
       const pct = itemKind === 'creature' && floorUsd > 0 ? ` ${priceUsd >= floorUsd ? '+' : '−'}${Math.abs(Math.round((priceUsd / floorUsd - 1) * 1000) / 10)}%` : '';
-      this.log(`LIST ${itemKind} ${String(item.id).slice(0, 8)} @ $${priceUsd} (floor $${floorUsd?.toFixed(2)}${pct})`);
+      const via = priceSource ? ` via ${priceSource}` : ''; // which pricing rung fired (species-clearing / rarity-clearing / seed / …)
+      this.log(`LIST ${itemKind} ${String(item.id).slice(0, 8)} @ $${priceUsd} (floor $${floorUsd > 0 ? floorUsd.toFixed(2) : '?'}${pct}${via})`);
       return true;
     } catch (e) {
       this.log('cashout junk-list err', e.status || '', (e.bodyText || e.message || '').slice(0, 80));
