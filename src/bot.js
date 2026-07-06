@@ -1096,7 +1096,10 @@ export class ZenkoBot {
         // change) simply have no rarity/variant → shown as "—".
         const { rarity, variant, species } = marketTraitsOf(s);
         this.recordEvent('market_sale', {
-          amounts, ref: { listingId: s.id, itemKind: kind, buyer },
+          // itemId (the creature id) is stable across reprices and is the reliable backfill key — the
+          // listingId changes on every reprice (and can be null), so the sales-log rarity backfill keys on
+          // itemId → the traits WE recorded when listing it (2026-07-06: reprices broke listingId matching).
+          amounts, ref: { listingId: s.id, itemId: s.item_id ?? null, itemKind: kind, buyer },
           meta: { priceUsd: usd, buyer, rarity, variant, species },
         });
         const qty = kind === 'gold' ? ` ${s.quantity}` : ` ${String(s.item_id ?? s.id).slice(0, 8)}`;
@@ -1231,8 +1234,18 @@ export class ZenkoBot {
     }
 
     for (const listing of active) {
+      const listKind = String(listing?.itemKind || '').toLowerCase();
+      const listTraits = listKind === 'creature' ? marketTraitsOf(listing) : {};
       let floorUsd = null;
-      try { floorUsd = await this.floorForListing(listing); } catch { continue; }
+      if (listKind === 'creature' && listTraits.rarity) {
+        // Rarity-aware floor (real per-rarity sales → seed), SAME source as the fresh-listing path — not
+        // the rarity-BLIND getMarketFloorUsd (cheapest creature of any rarity) that dragged an uncommon
+        // toward the common floor. planListingReprice clamps the decay at this, so the lot settles at its
+        // rarity's demand level instead of sliding to $0.01. Fall back to the generic floor only if the
+        // listing row carries no rarity (then the clamp is at least the market min, still > $0.01 → not a dump).
+        floorUsd = creatureFloorUsdForRarity(listTraits.rarity, this.creatureFloorZolana, this.priceUsd, listTraits.variant);
+      }
+      if (!(floorUsd > 0)) { try { floorUsd = await this.floorForListing(listing); } catch { continue; } }
       const plan = planListingReprice({ listing, floorUsd, now, cfg: this.cfg });
       if (!plan) continue;
       if (plan.itemKind !== 'gold' && !plan.itemId) continue;
@@ -1250,7 +1263,9 @@ export class ZenkoBot {
           : await listMarketItem(this.c, { itemKind: plan.itemKind, itemId: plan.itemId, priceUsd: plan.newPriceUsd });
         this.recordEvent('market_list', {
           ref: { listingId: res?.id ?? null, itemKind: plan.itemKind, itemId: plan.itemId, repriceFrom: plan.listingId },
-          meta: { priceUsd: plan.newPriceUsd, oldPriceUsd: plan.oldPriceUsd, floorUsd, currency: 'zenko', reprice: true },
+          // ...listTraits (rarity/variant/species) so the sales log can show what sold even for a REPRICED
+          // listing — the reprice used to drop these, so a repriced-then-sold pet showed rarity "—" (owner).
+          meta: { priceUsd: plan.newPriceUsd, oldPriceUsd: plan.oldPriceUsd, floorUsd, currency: 'zenko', reprice: true, ...listTraits },
         });
         this.log(`REPRICE ${plan.itemKind} ${plan.listingId} $${plan.oldPriceUsd} -> $${plan.newPriceUsd}`);
         return true;

@@ -200,6 +200,26 @@ test('summarizeSales backfills rarity/traits from our own market_list when the s
   assert.equal(row.variant, 'normal');
 });
 
+test('summarizeSales backfills rarity by stable itemId when the listingId changed via reprice (or is null)', () => {
+  const s = summarizeSales([
+    // fresh-listed with traits (listingId L1, itemId cr9) …
+    { type: 'market_list', ts: '2026-07-06T09:00:00Z', account: 'Onyx',
+      ref: { listingId: 'L1', itemKind: 'creature', itemId: 'cr9' },
+      meta: { priceUsd: 0.2, rarity: 'uncommon', variant: 'normal', species: 'brambark' } },
+    // … repriced: the new listingId came back null, only itemId ties it back to the traits …
+    { type: 'market_list', ts: '2026-07-06T10:00:00Z', account: 'Onyx',
+      ref: { listingId: null, itemKind: 'creature', itemId: 'cr9', repriceFrom: 'L1' },
+      meta: { priceUsd: 0.16, reprice: true } },
+    // … then it sold; the sale's listingId matches NEITHER market_list, but itemId does
+    { type: 'market_sale', ts: '2026-07-06T11:00:00Z', account: 'Onyx',
+      ref: { listingId: 'SALE-XYZ', itemId: 'cr9', itemKind: 'creature' },
+      amounts: { zolana: 800 }, meta: { priceUsd: 0.16 } },
+  ]);
+  const row = s.log[0];
+  assert.equal(row.rarity, 'uncommon', 'rarity backfilled by stable itemId despite listingId mismatch/null');
+  assert.equal(row.species, 'brambark');
+});
+
 // Pet generation per hour (2026-07-06, owner: "show how many pets and of what rarity we generate each hour").
 import { summarizePetGeneration } from '../scripts/serve-dashboard.js';
 

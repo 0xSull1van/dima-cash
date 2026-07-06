@@ -260,6 +260,25 @@ vtest('planListingReprice: decay-режим опускает от ТЕКУЩЕЙ
   vassert.equal(plan.newPriceUsd, Math.ceil(0.10*0.88*100)/100, '0.10 → ×0.88, а не floor 0.02');
 });
 
+// 2026-07-06 (owner: «маркет сливает петтов в пол»): decay больше НЕ опускает ниже rarity-флора спроса —
+// раньше катилось до minPriceUsd $0.01, дампя Uncommon сильно ниже реальной цены рынка (45% листингов ≤$0.03).
+vtest('planListingReprice: decay клэмпится на rarity-флор, не сливает в $0.01', () => {
+  const listing = { id: 'L1', item_kind: 'creature', item_id: 'c1', status: 'active', currency: 'zenko', price_usd: 0.18, created_at: new Date(Date.now() - 2 * 3600e3).toISOString() };
+  const cfg = { cashoutRepriceMinAgeMs: 3600e3, cashoutRepriceMinDropPct: 0.05, cashoutMinPriceUsd: 0.01, cashoutRepriceDecayPct: 0.12 };
+  // decay хочет 0.18×0.88=0.158, но rarity-флор 0.16 → клэмп в 0.16 (не ниже уровня спроса)
+  const plan = planListingReprice({ listing, floorUsd: 0.16, cfg });
+  vassert.ok(plan, 'с 0.18 ещё можно опустить до флора 0.16');
+  vassert.equal(plan.newPriceUsd, 0.16, 'клэмп на rarity-флор $0.16, а не $0.158 и точно не $0.01');
+});
+
+vtest('planListingReprice: на rarity-флоре больше НЕ репрайсит (держит уровень спроса)', () => {
+  const listing = { id: 'L1', item_kind: 'creature', item_id: 'c1', status: 'active', currency: 'zenko', price_usd: 0.16, created_at: new Date(Date.now() - 5 * 3600e3).toISOString() };
+  const cfg = { cashoutRepriceMinAgeMs: 3600e3, cashoutRepriceMinDropPct: 0.05, cashoutMinPriceUsd: 0.01, cashoutRepriceDecayPct: 0.12 };
+  // уже на флоре: decay хочет 0.14, клэмп = 0.16 = текущая → newPrice не ниже current → null (стоп)
+  const plan = planListingReprice({ listing, floorUsd: 0.16, cfg });
+  vassert.equal(plan, null, 'на демо-флоре стоп — ниже не сливаем');
+});
+
 // ── Адаптивный темп 2026-07-06 (owner: «хаотично, как надо для темпа рынка, по последним продажам
 // и времени продаж»): скорость поглощения рынка → наш кулдаун листинга.
 import { salesVelocityPerHour, planListingPace } from '../src/marketplace.js';

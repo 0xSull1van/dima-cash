@@ -553,14 +553,17 @@ export function planListingReprice({ listing, floorUsd, now = Date.now(), cfg = 
   const amount = Number(listing?.amount ?? listing?.quantity) || 1;
   // Demand-decay (2026-07-06, owner: "prices people actually buy at"): a stale lot is the market saying
   // "nobody buys at this price". Step it down FROM THE CURRENT price (×(1−decay) per step, once per
-  // cashoutRepriceMinAgeMs), rather than jumping to floor/discount-window — the price finds the demand
-  // level on its own and doesn't punch through it. Without decay — old behavior (target = floor × undercut-mid).
+  // cashoutRepriceMinAgeMs) — BUT never below `floorUsd`, this rarity's demand floor (real per-rarity
+  // sales, passed by the caller via creatureFloorUsdForRarity). The lot settles AT the demand level and
+  // holds; once it reaches the floor the `newPriceUsd < currentPriceUsd` guard stops further reprices.
+  // Before this clamp the decay slid all the way to minPriceUsd ($0.01), dumping uncommons far under what
+  // the market pays (owner 2026-07-06: "reprice сливает петтов в пол" — 45% of listings piled at ≤$0.03).
   const decay = Math.max(0, Number(cfg.cashoutRepriceDecayPct) || 0);
   const uMin = Math.max(0, Number(cfg.cashoutUndercutPctMin) || 0);
   const uMax = Math.max(uMin, Number(cfg.cashoutUndercutPctMax) || 0);
   const undercutFactor = uMax > 0 ? 1 - (uMin + uMax) / 2 : 1;
   const targetRaw = kind === 'gold' ? amount * floorUsd
-    : decay > 0 ? currentPriceUsd * (1 - decay)
+    : decay > 0 ? Math.max(currentPriceUsd * (1 - decay), floorUsd)
     : floorUsd * undercutFactor;
   const newPriceUsd = usdCeilCents(targetRaw);
   const minPriceUsd = Math.max(0, Number(cfg.cashoutMinPriceUsd ?? 0.01) || 0);
