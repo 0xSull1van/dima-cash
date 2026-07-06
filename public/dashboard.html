@@ -174,7 +174,7 @@ table.sales td.t{color:var(--muted)}
   <h2 style="display:flex;align-items:baseline">Sales log<span class="salesNet" id="salesNet"></span></h2>
   <div class="panel tblWrap">
     <table class="sales">
-      <thead><tr><th>Time</th><th>Account</th><th>Item</th><th style="text-align:right">ZOL</th><th style="text-align:right">USD</th></tr></thead>
+      <thead><tr><th>Time</th><th>Account</th><th>Item</th><th>Rarity</th><th style="text-align:right">ZOL</th><th style="text-align:right">USD</th></tr></thead>
       <tbody id="salesBody"></tbody>
     </table>
     <div class="emptyNote" id="salesEmpty" style="display:none">no sales yet</div>
@@ -525,7 +525,23 @@ function renderSales(s){
     const td=(cls,txt)=>{ const d=el('td',cls,txt); tr.appendChild(d); return d; };
     td('t', fmtHM(row.ts));
     td(null, row.account||'?');
-    td(null, row.itemKind||'item');
+    // Item: species for creatures (else the kind), with a ✦ badge for a special variant (Shiny/Golden/Rainbow…)
+    const itemCell=el('td', null, row.species || row.itemKind || 'item');
+    if(row.variant && row.variant.toLowerCase()!=='normal'){
+      const v=el('span','varb','✦ '+row.variant); v.style.marginLeft='6px'; itemCell.appendChild(v);
+    }
+    tr.appendChild(itemCell);
+    // Rarity: colored pill (same palette as the account cards); "—" for fungible gold / no rarity
+    const r=String(row.rarity||'').toLowerCase();
+    const rarCell=el('td');
+    if(RSHORT[r]){
+      const p=el('span','pill');
+      const i=el('i'); i.style.background=`var(--r-${r})`; p.appendChild(i);
+      p.appendChild(document.createTextNode(RLABEL[r]));
+      p.title=RLABEL[r];
+      rarCell.appendChild(p);
+    } else { rarCell.className='t'; rarCell.textContent='—'; }
+    tr.appendChild(rarCell);
     td('z', '+'+fmtZ(row.zolana));
     td('u', fmtUsd(row.usd||0));
     body.appendChild(tr);

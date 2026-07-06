@@ -2,11 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   marketSpeciesOf,
+  marketTraitsOf,
   parseSales,
   creatureMetricsBySpecies,
   creatureAsksBySpecies,
   creatureIdealPriceUsd,
 } from '../src/marketplace.js';
+
+test('marketTraitsOf extracts rarity/variant/species for the sales log (nested or flat, null when absent)', () => {
+  assert.deepEqual(marketTraitsOf({ item: { species: 'Smoldra', rarity: 'Uncommon', variant: 'Rainbow' } }),
+    { rarity: 'uncommon', variant: 'rainbow', species: 'smoldra' });
+  assert.deepEqual(marketTraitsOf({ species: 'Quartz', rarity: 'Rare' }),
+    { rarity: 'rare', variant: null, species: 'quartz' });
+  assert.deepEqual(marketTraitsOf({ item_kind: 'gold', quantity: 50000 }),
+    { rarity: null, variant: null, species: null }, 'fungible gold → all null (renders as —)');
+});
 
 // 2026-07-06: per-species market metrics + species-first "ideal price" waterfall.
 

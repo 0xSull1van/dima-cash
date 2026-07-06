@@ -162,3 +162,22 @@ test('summarizeSales: dedups by listingId, computes NET in Z and $, log newest-f
   assert.equal(s.netUsd, 0.08);
   assert.equal(s.log[0].ts, '2026-07-05T12:00:00Z', 'newest first');
 });
+
+test('summarizeSales carries account + rarity + traits (species/variant) into each log row', () => {
+  const s = summarizeSales([
+    { type: 'market_sale', ts: '2026-07-06T10:00:00Z', account: 'Nova',
+      ref: { listingId: 'L9', itemKind: 'creature' },
+      amounts: { zolana: 200 }, meta: { priceUsd: 0.05, rarity: 'uncommon', variant: 'rainbow', species: 'smoldra' } },
+    { type: 'market_sale', ts: '2026-07-06T09:00:00Z', account: 'main',
+      ref: { listingId: 'Lg', itemKind: 'gold' },
+      amounts: { zolana: 50 }, meta: { priceUsd: 0.02 } }, // gold: no traits
+  ]);
+  const creature = s.log.find(r => r.itemKind === 'creature');
+  assert.equal(creature.account, 'Nova');
+  assert.equal(creature.rarity, 'uncommon');
+  assert.equal(creature.species, 'smoldra');
+  assert.equal(creature.variant, 'rainbow');
+  const gold = s.log.find(r => r.itemKind === 'gold');
+  assert.equal(gold.rarity, null, 'fungible gold has no rarity → dashboard renders —');
+  assert.equal(gold.species, null);
+});

@@ -123,6 +123,19 @@ export function marketSpeciesOf(row) {
   );
 }
 
+// Display/telemetry traits of a market row (sale or listing): { rarity, variant, species }. Same
+// defensive multi-path extraction as marketSpeciesOf (the creature nests under `item`). Absent fields →
+// null, so a gold/fungible sale (no rarity/variant/species) yields all-null gracefully. Used to enrich the
+// sales log with what actually sold — owner 2026-07-06: "in the sales log, write which account it sold on,
+// + the rarity + traits".
+export function marketTraitsOf(row) {
+  return {
+    rarity: (lower(row?.rarity ?? row?.item?.rarity ?? '') || null),
+    variant: (lower(row?.variant ?? row?.item?.variant ?? '') || null),
+    species: (marketSpeciesOf(row) || null),
+  };
+}
+
 export function parseSales(json) {
   const arr = Array.isArray(json?.sales) ? json.sales : Array.isArray(json) ? json : [];
   return arr.map((s) => ({

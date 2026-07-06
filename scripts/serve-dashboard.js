@@ -109,6 +109,9 @@ export function summarizeSales(events = [], { limit = 50 } = {}) {
       ts: e.ts,
       account: e.account,
       itemKind: e.ref?.itemKind || 'item',
+      rarity: e.meta?.rarity || null,   // 2026-07-06: what actually sold — rarity + traits for the sales log
+      variant: e.meta?.variant || null,
+      species: e.meta?.species || null,
       zolana: Number(e.amounts?.zolana) || 0,
       usd: Number(e.meta?.priceUsd) || 0,
       buyer: e.ref?.buyer || null,

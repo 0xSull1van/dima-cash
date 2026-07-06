@@ -46,6 +46,7 @@ import {
   creatureFloorUsdForRarity,
   creatureIdealPriceUsd,
   creatureAsksBySpecies,
+  marketTraitsOf,
   getMyListings,
   getMyGoldListings,
   getMySales,
@@ -1083,12 +1084,20 @@ export class ZenkoBot {
       for (const s of newSales) {
         this.soldMarketIds.add(s.id);
         const { amounts, usd, kind, buyer } = saleLedgerAmounts(s, this.priceUsd);
+        // Rarity + traits of what sold (species/variant) — for the sales log (owner 2026-07-06). Stored in
+        // the ledger meta so the dashboard can render them; null for fungible gold. Old sales (pre-this-
+        // change) simply have no rarity/variant → shown as "—".
+        const { rarity, variant, species } = marketTraitsOf(s);
         this.recordEvent('market_sale', {
-          amounts, ref: { listingId: s.id, itemKind: kind, buyer }, meta: { priceUsd: usd, buyer },
+          amounts, ref: { listingId: s.id, itemKind: kind, buyer },
+          meta: { priceUsd: usd, buyer, rarity, variant, species },
         });
         const qty = kind === 'gold' ? ` ${s.quantity}` : ` ${String(s.item_id ?? s.id).slice(0, 8)}`;
+        // e.g. "SOLD creature a1b2c3d4 [smoldra uncommon ✦rainbow] for $0.2 (~120 Z) to 2zzz…"
+        const traits = [species, rarity, (variant && variant !== 'normal') ? `✦${variant}` : null].filter(Boolean).join(' ');
+        const traitsStr = traits ? ` [${traits}]` : '';
         const toWhom = buyer ? ` to ${String(buyer).slice(0, 8)}…` : '';
-        this.log(`SOLD ${kind}${qty} for $${usd} (~${Math.round(amounts.zolana)} Z)${toWhom}`);
+        this.log(`SOLD ${kind}${qty}${traitsStr} for $${usd} (~${Math.round(amounts.zolana)} Z)${toWhom}`);
       }
       // 2026-07-06: persist AFTER processing the batch (not once per sale) — survives a process restart,
       // otherwise the next tick after ANY restart (frequent under --watch) sees these same IDs as "new"
