@@ -7,6 +7,7 @@ import {
   creatureMetricsBySpecies,
   creatureAsksBySpecies,
   creatureIdealPriceUsd,
+  creatureVariantFloorUsd,
 } from '../src/marketplace.js';
 
 test('marketTraitsOf extracts rarity/variant/species for the sales log (nested or flat, null when absent)', () => {
@@ -140,6 +141,43 @@ test('ideal price: explicit (rarity,variant) override wins over all market signa
   });
   assert.equal(r.source, 'variant-override');
   assert.equal(r.priceUsd, 0.2); // CREATURE_VARIANT_PRICE_OVERRIDE_USD['uncommon:rainbow']
+});
+
+// 2026-07-07 (owner: "рарные uncommon — каждый трейт отдельно, флор по последнему, по чуть завышеной"):
+// a special variant prices off ITS OWN live per-trait floor × premium, above the plain rarity price.
+test('creatureVariantFloorUsd: per-trait min from real special-variant sales (normal + fleet excluded)', () => {
+  const sales = parseSales({ sales: [
+    { item_kind: 'creature', price_usd: 0.12, rarity: 'Uncommon', variant: 'Shadow', seller: 'A' },
+    { item_kind: 'creature', price_usd: 0.09, rarity: 'Uncommon', variant: 'Shadow', seller: 'B' }, // min shadow
+    { item_kind: 'creature', price_usd: 0.30, rarity: 'Uncommon', variant: 'Golden', seller: 'C' },
+    { item_kind: 'creature', price_usd: 0.05, rarity: 'Uncommon', variant: 'Normal', seller: 'D' }, // normal → not here
+    { item_kind: 'creature', price_usd: 0.01, rarity: 'Uncommon', variant: 'Shadow', seller: 'OUR' }, // fleet → excluded
+  ] });
+  const vf = creatureVariantFloorUsd(sales, { fleetWallets: ['OUR'] });
+  assert.equal(vf['uncommon:shadow'], 0.09, 'min external Shadow sale');
+  assert.equal(vf['uncommon:golden'], 0.30);
+  assert.equal(vf['uncommon:normal'], undefined, 'normal is the per-rarity floor, not a per-trait one');
+});
+
+test('ideal price: special variant priced on its OWN trait floor × premium (not the plain rarity)', () => {
+  const r = creatureIdealPriceUsd({
+    cfg: { ...CFG, cashoutVariantPremiumPct: 0.1 }, rng: () => 0.5,
+    species: 'smoldra', rarity: 'uncommon', variant: 'shadow',
+    variantFloorUsd: { 'uncommon:shadow': 0.10 },
+    clearingUsdByRarity: { uncommon: 0.05 }, clearingCountByRarity: { uncommon: 5 }, // cheaper plain rarity — ignored
+  });
+  assert.equal(r.source, 'variant-floor');
+  assert.equal(r.priceUsd, 0.11, 'trait floor 0.10 × (1 + 0.1 premium)');
+});
+
+test('ideal price: special variant with no live trait floor → manual override, else base rarity price', () => {
+  const withOverride = price({ species: 'x', rarity: 'uncommon', variant: 'golden', variantFloorUsd: {} });
+  assert.equal(withOverride.source, 'variant-override');
+  assert.equal(withOverride.priceUsd, 0.05); // seed golden
+
+  const noSignal = price({ species: 'x', rarity: 'uncommon', variant: 'shiny', variantFloorUsd: {}, floorZolanaByRarity: {}, zolanaPriceUsd: null });
+  assert.equal(noSignal.source, 'seed', 'no trait signal → still lists at the base rarity price, not skipped');
+  assert.equal(noSignal.priceUsd, 0.03);
 });
 
 test('ideal price: never undercuts our own fleet ask (ladder against self-dump)', () => {

@@ -663,9 +663,11 @@ export class ZenkoBot {
       let floorsForSnapshot = null, countsForSnapshot = {}, clearingForSnapshot = null;
       try {
         if (!this.priceUsd) { try { this.priceUsd = (await this.c.api('/api/price')).zolanaPriceUsd; } catch {} }
-        const { floors, counts, clearingUsd, metricsBySpecies, velocity } = await getCreatureFloorAndVolumeByRarity(this.c, { zolanaPriceUsd: this.priceUsd, fleetWallets: this.cfg.fleetWallets });
+        const { floors, counts, clearingUsd, variantFloors, metricsBySpecies, velocity } = await getCreatureFloorAndVolumeByRarity(this.c, { zolanaPriceUsd: this.priceUsd, fleetWallets: this.cfg.fleetWallets });
         // clearing (median of real sales, USD) — merge over last-known-good, like floors below
         if (clearingUsd && Object.keys(clearingUsd).length) this.creatureClearingUsd = { ...(this.creatureClearingUsd || {}), ...clearingUsd };
+        // per-TRAIT floor ($ per rarity:variant) — merged last-known-good; special variants price off this (owner 2026-07-07)
+        if (variantFloors && Object.keys(variantFloors).length) this.creatureVariantFloor = { ...(this.creatureVariantFloor || {}), ...variantFloors };
         // sale COUNT per rarity (same normal+external filter) — merged in lockstep with clearing so the
         // thin-data guard in creatureIdealPriceUsd knows how many sales are behind each median (a lone
         // outlier sale must NOT set the price — the $1.67 Uncommon, owner 2026-07-06).
@@ -1416,6 +1418,7 @@ export class ZenkoBot {
         asksBySpecies: creatureAsksBySpecies(listingRows, mkOpts),
         clearingUsdByRarity: this.creatureClearingUsd || {},
         clearingCountByRarity: this.creatureSalesCount || {}, // thin-data guard: don't trust a 1-sale median
+        variantFloorUsd: this.creatureVariantFloor || {},     // per-trait floor → special variants priced on their own trait
         asksByRarity: creatureAsksByRarity(listingRows, mkOpts),
         floorZolanaByRarity: this.creatureFloorZolana || {},
         zolanaPriceUsd: this.priceUsd,

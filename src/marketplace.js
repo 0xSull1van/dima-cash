@@ -185,6 +185,26 @@ export function salesCountByRarity(sales, { fleetWallets } = {}) {
   return out;
 }
 
+// Floor USD PER TRAIT: `${rarity}:${variant}` → min real external sale price for that exact (rarity,variant)
+// — the per-trait floor the owner wants (2026-07-07: "каждый трейт смотрится отдельно, флор по какому
+// последнему брали"). ONLY non-normal variants (Golden/Shadow/Rainbow/Shiny) — normal is the per-rarity
+// floor above. Excludes our own fleet's sales. So a Shadow Uncommon prices off real Shadow-Uncommon deals,
+// not the plain Uncommon floor. Returns e.g. { 'uncommon:shadow': 0.09, 'uncommon:golden': 0.05 }.
+export function creatureVariantFloorUsd(sales, { fleetWallets } = {}) {
+  const fleet = toWalletSet(fleetWallets);
+  const out = {};
+  for (const s of sales || []) {
+    if (s.itemKind !== 'creature' || s.currency === 'gems') continue;
+    if (!(s.priceUsd > 0) || !RARITY_KEYS.includes(s.rarity)) continue;
+    if (s.seller != null && fleet.has(String(s.seller))) continue;
+    const v = lower(s.variant);
+    if (!v || v === 'normal') continue; // normal → the per-rarity floor, not here
+    const key = `${s.rarity}:${v}`;
+    if (out[key] == null || s.priceUsd < out[key]) out[key] = s.priceUsd;
+  }
+  return out;
+}
+
 // ── Demand pricing model (2026-07-06, owner: "we set prices people actually buy at, don't dump on each
 // other, look at the overall economy"). Three market signals instead of a single min-floor:
 //   clearing (the MEDIAN of real external sales) = "the price people actually buy at";
@@ -352,8 +372,12 @@ export const CREATURE_FLOOR_SEED_USD = {
 // Rainbow), while a special variant is objectively worth more — reusing the rarity-floor would underprice
 // it. 2026-07-06 (friend): uncommon rainbow — via the same breeding pipeline (vault → up to 8/8) — once
 // exhausted, sell at $0.2 (Golden/Shadow and Rainbow of other rarities stay out of auto-sale — see junkVariantRarityOverrides).
+// Manual per-trait FALLBACK price, used only when there's no live per-trait floor yet (creatureVariantFloorUsd).
+// 2026-07-07: golden $0.05 (dima's table); rainbow $0.2. Shadow/Shiny have no reliable seed — they price off
+// the live per-trait floor once real sales appear, else fall to the base rarity price (not fabricated here).
 export const CREATURE_VARIANT_PRICE_OVERRIDE_USD = {
   'uncommon:rainbow': 0.2,
+  'uncommon:golden': 0.05,
 };
 
 // Creature floor (USD) for listing, accounting for RARITY (and, if a variant is given, more precisely):
@@ -430,6 +454,7 @@ export function creatureIdealPriceUsd({
   metricsBySpecies = {}, asksBySpecies = {},
   clearingUsdByRarity = {}, asksByRarity = {},
   clearingCountByRarity = {}, // # of external normal sales behind each rarity median — for the thin-data guard
+  variantFloorUsd = {},       // `${rarity}:${variant}` → live per-trait floor from real special-variant sales
   floorZolanaByRarity = {}, zolanaPriceUsd = null,
   cfg = {}, rng = Math.random,
 } = {}) {
@@ -450,10 +475,22 @@ export function creatureIdealPriceUsd({
     ? { ...out, priceUsd: Math.min(out.priceUsd, rarityFloorUsd * maxOverFloor) }
     : out;
 
-  // 1) explicit (rarity,variant) override wins over everything (special variants) — not capped (manual price)
-  if (variant != null) {
-    const override = CREATURE_VARIANT_PRICE_OVERRIDE_USD[`${rar}:${lower(variant)}`];
+  // 1) SPECIAL VARIANT (Golden/Shadow/Rainbow/Shiny) → priced on ITS OWN trait floor, slightly elevated
+  //    (owner 2026-07-07: "каждый трейт смотрится отдельно, флор по какому последнему брали, по чуть
+  //    завышеной цене"): the LIVE per-trait floor from real sales of this rarity:variant first (×1+premium),
+  //    then the manual override, else fall through to the base rarity price (still list it, don't skip).
+  //    NOT capped by the rarity floor — a trait is objectively worth more than the plain rarity.
+  if (variant != null && isSpecialVariant(variant)) {
+    const key = `${rar}:${lower(variant)}`;
+    const premium = 1 + Math.max(0, Number(cfg.cashoutVariantPremiumPct) || 0);
+    const liveFloor = Number(variantFloorUsd[key]);
+    if (liveFloor > 0) {
+      const org = planOrganicPrice({ floorUsd: liveFloor * premium, jitterPct, minPriceUsd, rng });
+      if (org) return { priceUsd: org.priceUsd, source: 'variant-floor' };
+    }
+    const override = CREATURE_VARIANT_PRICE_OVERRIDE_USD[key];
     if (override != null) return { priceUsd: override, source: 'variant-override' };
+    // no trait signal yet → fall through to the normal rarity pricing below (base price)
   }
 
   // 2) species demand — the finest, most accurate signal
@@ -781,7 +818,11 @@ export function pickRecycleFodder(creatures = [], cfg = {}) {
     const always = fodderRarities.has(rar);
     const exhausted = exhaustRarities.has(rar) && (Number(c?.breed_count) || 0) >= cap; // an exhausted breeder
     if (!always && !exhausted) continue;
-    if (protectSpecial && isProtectedVariant(c?.variant)) continue;    // don't sacrifice Golden/Shadow/Rainbow; Shiny = like Normal
+    // Commons are XP fodder regardless of trait (owner 2026-07-07: "рарные common, типо shadow — тоже
+    // конвертились") — recycle Golden/Shadow commons too; keep only the Rainbow jackpot. Higher rarities
+    // keep the full Golden/Shadow/Rainbow protection. Off (default) = the old protect-everything behavior.
+    const commonSpecialToXp = rar === 'common' && cfg.recycleCommonVariantsToXp === true && lower(c?.variant) !== 'rainbow';
+    if (protectSpecial && isProtectedVariant(c?.variant) && !commonSpecialToXp) continue; // Shiny = like Normal (already fodder)
     if (cfg.recycleProtectLux !== false && isLuxCreature(c)) continue; // lux commons = breeding stock for T1 (Gleamguard), not XP fodder
     if (busyIds.has(c?.id) || isInRun(c) || isFavoriteCreature(c) || isPlacedCreature(c) || isListed(c) || hasBusyStatus(c)) continue; // isInRun: run_id → otherwise 409 "out on a run"; bound NOT excluded (see comment)
     out.push(c);
@@ -804,7 +845,8 @@ export function pickPlacedFodder(creatures = [], cfg = {}) {
     const always = fodderRarities.has(rar);
     const exhausted = exhaustRarities.has(rar) && (Number(c?.breed_count) || 0) >= cap;
     if (!always && !exhausted) continue;
-    if (protectSpecial && isProtectedVariant(c?.variant)) continue; // Golden/Shadow/Rainbow protected; Shiny = like Normal
+    const commonSpecialToXp = rar === 'common' && cfg.recycleCommonVariantsToXp === true && lower(c?.variant) !== 'rainbow';
+    if (protectSpecial && isProtectedVariant(c?.variant) && !commonSpecialToXp) continue; // Golden/Shadow commons recyclable when enabled; Rainbow jackpot kept
     if (cfg.recycleProtectLux !== false && isLuxCreature(c)) continue; // lux — the same shield as in pickRecycleFodder
     if (isFavoriteCreature(c) || isListed(c) || isInRun(c)) continue; // in a run → not "just on a plot", don't touch
     if (!isPlacedCreature(c)) continue;                                // only the parked (stuck) ones
@@ -1029,6 +1071,7 @@ export async function getCreatureFloorAndVolumeByRarity(client, { zolanaPriceUsd
     floors: creatureFloorZolanaByRarity(sales, { zolanaPriceUsd, fleetWallets }),
     counts: salesCountByRarity(sales, { fleetWallets }),
     clearingUsd: creatureClearingUsdByRarity(sales, { fleetWallets }), // median of real sales — the demand-price base
+    variantFloors: creatureVariantFloorUsd(sales, { fleetWallets }),   // per-trait floor (rarity:variant) — special-variant pricing
     metricsBySpecies: creatureMetricsBySpecies(sales, { fleetWallets }), // per-species floor/clearing/count — the ideal-price base
     velocity: salesVelocityPerHour(sales, { fleetWallets }),           // market pulse — the adaptive listing pace
   };

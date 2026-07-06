@@ -395,6 +395,24 @@ test('lux: pickJunkCreatures не продаёт lux даже выдохшего
   assert.equal(out.length, 0, 'lux не товар — стратегический сток');
 });
 
+// 2026-07-07 (owner: "рарные common, типо shadow — тоже конвертились"): recycleCommonVariantsToXp recycles
+// Golden/Shadow COMMONS to XP (a common is a common regardless of trait), keeping only the Rainbow jackpot.
+test('recycleCommonVariantsToXp: Golden/Shadow commons → XP, Rainbow common kept, higher rarities protected', () => {
+  const roster = [
+    { id: 'shadowC', rarity: 'Common', variant: 'Shadow' },
+    { id: 'goldC', rarity: 'Common', variant: 'Golden' },
+    { id: 'rainbowC', rarity: 'Common', variant: 'Rainbow' },   // jackpot — kept
+    { id: 'shadowU', rarity: 'Uncommon', variant: 'Shadow', breed_count: 8 }, // higher rarity → still protected
+  ];
+  const cfg = { recycleFodderRarities: ['common'], recycleExhaustedRarities: ['uncommon'], breedMaxCount: 8, recycleCommonVariantsToXp: true };
+  const out = pickRecycleFodder(roster, cfg).map(c => c.id).sort();
+  assert.deepEqual(out, ['goldC', 'shadowC'], 'Golden/Shadow commons converted; Rainbow common + special Uncommon kept');
+
+  // OFF (default) → the old behavior: all special-variant commons protected
+  const off = pickRecycleFodder(roster, { recycleFodderRarities: ['common'] }).map(c => c.id);
+  assert.equal(off.length, 0, 'without the flag, special-variant commons stay protected');
+});
+
 test('lux: pickBreedingIntake берёт lux-коммона в ясли первым', () => {
   const luxCommon = { id: 'lx', creature_id: 'glimra', rarity: 'Common', stage: 'Baby', breed_count: 0 };
   const unc = { id: 'u1', rarity: 'Uncommon', stage: 'Baby', breed_count: 0 };

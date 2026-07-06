@@ -64,6 +64,7 @@ export function farmTradingConfig(overrides = {}) {
     recycleFodderRarities: ['common'],   // Common → XP always (we don't breed them)
     recycleExhaustedRarities: ['uncommon'], // Uncommon → XP ONLY after 8/8 breeds (friend: an exhausted breeder into XP; non-exhausted = breeding stock). Keep Rare/Epic for sale.
     recycleProtectSpecialVariants: true,
+    recycleCommonVariantsToXp: true,     // 2026-07-07 (owner: "рарные common, типо shadow — тоже конвертились"): a Golden/Shadow COMMON is still just a common (low base) → recycle it to XP like a normal common; only the Rainbow-common jackpot is kept. Higher rarities keep full variant protection.
     autoVaultWhenFull: true,             // "rares into the vault" when the roster is full: frees a slot for hatch, the Rare+ is preserved in storage (not sold/burned). Only when the roster is full → no throughput loss.
     autoVaultSwap: true,                 // 2026-07-05: continuous roster polishing — if a vaulted Rare+ is more valuable than the weakest active runner, swap them (otherwise the vault accumulates upgrades that never return to battle)
     autoBreedingPipeline: true,           // 2026-07-06: owner — "let them breed, but in the vault": keep a pool of 10 in the vault for breeding (free there), release on 8/8 exhaustion for sale
@@ -174,7 +175,11 @@ export function farmTradingConfig(overrides = {}) {
     junkCreatureRarities: ['uncommon'],
     junkCreatureStages: ['Baby', 'Juvenile', 'Adult', 'Elder'],
     junkCreatureVariants: ['normal', ''],
-    junkVariantRarityOverrides: ['uncommon:rainbow'], // 2026-07-06 (friend): uncommon rainbow is also sold on exhaustion (via the same vault pipeline), at $0.2 (see CREATURE_VARIANT_PRICE_OVERRIDE_USD). Rare/Epic Rainbow and all Golden/Shadow stay protected.
+    // 2026-07-07 (owner: "рарные uncommon продавались по чуть завышеной цене, каждый трейт отдельно"): ALL
+    // special-variant Uncommons are sold now, each priced on its OWN per-trait floor (creatureVariantFloorUsd,
+    // ×1+cashoutVariantPremiumPct) — see creatureIdealPriceUsd. Rare/Epic special variants still stay held.
+    junkVariantRarityOverrides: ['uncommon:rainbow', 'uncommon:golden', 'uncommon:shadow', 'uncommon:shiny'],
+    cashoutVariantPremiumPct: 0.1,       // list special variants ~10% above their per-trait floor ("чуть завышеной")
     junkCreatureKeepPerSpecies: 0,       // sell everyone, keep nothing
     optimizeDepth: true,
     depthObjective: 'gold-per-run',

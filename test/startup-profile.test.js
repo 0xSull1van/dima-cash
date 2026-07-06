@@ -28,7 +28,9 @@ test('farmTradingConfig enables seller-side trading while keeping human cadence'
   assert.equal(cfg.junkMinBreedCount, 8);
   assert.equal(cfg.junkSurplusKeepPerSpecies, 4); // 2026-07-06: излишек сверх 2 брид-пар продаётся сразу, не ждёт 8/8
   assert.equal(cfg.breedAllowCrossSpecies, false); // 2026-07-06: строго same-species (друг: «одна порода, одна рарность, один тир, у обоих»)
-  assert.deepEqual(cfg.junkVariantRarityOverrides, ['uncommon:rainbow']); // 2026-07-06: анкамон-рейнбоу тоже продаём по исчерпанию
+  assert.deepEqual(cfg.junkVariantRarityOverrides, ['uncommon:rainbow', 'uncommon:golden', 'uncommon:shadow', 'uncommon:shiny']); // 2026-07-07: все спец-варианты анкамона продаём (per-trait floor)
+  assert.equal(cfg.recycleCommonVariantsToXp, true);  // 2026-07-07: Golden/Shadow commons → XP (кроме Rainbow)
+  assert.equal(cfg.cashoutVariantPremiumPct, 0.1);    // спец-варианты на ~10% выше своего трейт-флора
   assert.equal(cfg.autoForgeTrainerRelic, true); // Task-2: форж trainer-реликвий
   assert.equal(cfg.relicMaxActionsPerTick, 15);  // 2026-07-06: батч-кап, чтобы разовый бэклог не блокировал данжи
   assert.equal(cfg.forgeMinGold, 400000);        // форж защищает egg/breed-бюджет
