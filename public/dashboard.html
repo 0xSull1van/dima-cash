@@ -49,6 +49,13 @@ h2{
 .tile .sub{font-size:11px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tile .sub .ok{color:var(--plus)}
 
+/* ── pet generation ── */
+.genRow{display:flex;gap:28px;flex-wrap:wrap;align-items:flex-start}
+.genBlock{min-width:150px}
+.genLbl{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);margin-bottom:8px}
+.genBig{font-size:26px;font-weight:700;line-height:1}
+.genBig .unit{font-size:12px;color:var(--muted);font-weight:600}
+
 /* ── chart controls ── */
 .controls{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .seg{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
@@ -142,6 +149,12 @@ table.sales td.t{color:var(--muted)}
   <div class="tile"><div class="lbl">ZOL price</div><div class="val" id="kRate">—</div><div class="sub">jupiter · independent</div></div>
   <div class="tile"><div class="lbl">Pipeline 24h</div><div class="val" id="kConv">—</div><div class="sub" id="kConvSub">—</div></div>
   <div class="tile"><div class="lbl">Incubation</div><div class="val" id="kInc">—</div><div class="sub" id="kIncSub">—</div></div>
+</section>
+
+<!-- 1b. Pet generation · per hour -->
+<section class="sec">
+  <h2>Pet generation · last hour</h2>
+  <div class="panel"><div class="genRow" id="genRow"></div></div>
 </section>
 
 <!-- 2. NFT floor · candles -->
@@ -419,6 +432,51 @@ function renderKpis(s){
   const fullSpan = el('span', full===accs.length&&accs.length?'ok':'', `full: ${full}/${accs.length}`);
   sub.appendChild(fullSpan);
 }
+
+/* ============================== pet generation (per hour) ============================== */
+// helper: a row of colored rarity pills {rarity: count}
+function rarityPills(counts){
+  const wrap = el('div','pills');
+  for(const r of RARITIES){
+    const n = counts[r]; if(!n) continue;
+    const p = el('span','pill');
+    const i = el('i'); i.style.background=`var(--r-${r})`; p.appendChild(i);
+    p.appendChild(document.createTextNode(RLABEL[r]+' '));
+    p.appendChild(el('b',null,nfInt.format(n)));
+    p.title = RLABEL[r];
+    wrap.appendChild(p);
+  }
+  return wrap;
+}
+function renderPetGen(s){
+  const g = s.petGen || { hatches:0, breeds:0, breedsByRarity:{} };
+  const row = $('genRow'); row.textContent='';
+
+  // 1) pets hatched in the last hour (total generation rate)
+  const b1 = el('div','genBlock');
+  b1.appendChild(el('div','genLbl','Hatched / hour'));
+  const big = el('div','genBig'); big.appendChild(document.createTextNode(nfInt.format(g.hatches)+' '));
+  big.appendChild(el('span','unit','pets')); b1.appendChild(big);
+  row.appendChild(b1);
+
+  // 2) breeding this hour by tier — the conveyor's output (uncommon pair → rare egg, rare pair → epic egg)
+  const b2 = el('div','genBlock');
+  b2.appendChild(el('div','genLbl',`Breeding / hour (${nfInt.format(g.breeds)} pairs → next tier)`));
+  const bp = rarityPills(g.breedsByRarity||{});
+  if(!bp.children.length) bp.appendChild(el('span','emptyNote','no breeding this hour'));
+  b2.appendChild(bp);
+  row.appendChild(b2);
+
+  // 3) current fleet roster by rarity (composition of what we hold)
+  const roster = {};
+  for(const a of (s.accounts||[])) for(const c of (a.creaturesList||[])){ const r=String(c.rarity||'').toLowerCase(); if(RSHORT[r]) roster[r]=(roster[r]||0)+1; }
+  const total = Object.values(roster).reduce((x,y)=>x+y,0);
+  const b3 = el('div','genBlock');
+  b3.appendChild(el('div','genLbl',`Fleet roster (${nfInt.format(total)} pets)`));
+  b3.appendChild(rarityPills(roster));
+  row.appendChild(b3);
+}
+
 function setValUnit(id, val, unit){
   const n=$(id); n.textContent='';
   n.appendChild(document.createTextNode(val+' '));
@@ -566,7 +624,7 @@ async function fetchState(){
   try{
     const r=await fetch('/api/state'); if(!r.ok) return;
     stateData=await r.json();
-    renderKpis(stateData); renderAccounts(stateData); renderSales(stateData);
+    renderKpis(stateData); renderPetGen(stateData); renderAccounts(stateData); renderSales(stateData);
     $('lastUpd').textContent=new Date().toLocaleTimeString();
     const live=(stateData.accounts||[]).filter(isLive).length;
     $('liveCount').textContent=`${live}/${(stateData.accounts||[]).length}`;

@@ -136,6 +136,30 @@ export function summarizeSales(events = [], { limit = 50 } = {}) {
   return { count: sales.length, netZolana, netUsd, log: sales.slice(0, limit) };
 }
 
+// Pet generation over a rolling window (default last hour) — how many pets we generate and of what tier
+// (2026-07-06, owner: "show how many pets and of what rarity we generate each hour"). `hatches` = pets
+// that actually appeared (egg_hatch count). Note the hatch event does NOT carry the pet's rarity (the
+// game's hatch response doesn't expose it where the bot reads), so the per-tier split comes from `breed`
+// events by the pair's rarity — the breeding ladder means an uncommon pair → a rare egg, a rare pair → an
+// epic egg, so `breedsByRarity` is "what tier the conveyor is producing this hour". Amounts are raw counts
+// (egg_hatch/breed aren't duplicated in the ledger, unlike market_sale).
+export function summarizePetGeneration(events = [], { now = Date.now(), windowMs = 60 * 60 * 1000 } = {}) {
+  const start = now - windowMs;
+  let hatches = 0;
+  const breedsByRarity = {};
+  for (const e of events) {
+    const t = Date.parse(e?.ts || '');
+    if (!Number.isFinite(t) || t < start || t > now) continue;
+    if (e.type === 'egg_hatch') hatches++;
+    else if (e.type === 'breed') {
+      const r = String(e.meta?.minRarity || 'unknown').toLowerCase();
+      breedsByRarity[r] = (breedsByRarity[r] || 0) + 1;
+    }
+  }
+  const breeds = Object.values(breedsByRarity).reduce((s, n) => s + n, 0);
+  return { windowHours: Math.round((windowMs / 3.6e6) * 10) / 10, hatches, breeds, breedsByRarity };
+}
+
 export function collectState({ logDir = LOG_DIR, registryPath = DEFAULT_REGISTRY_PATH, playersOnly = false, now = Date.now() } = {}) {
   const allEvents = [];
   const runtime = readRuntimeStatuses({ logDir });
@@ -205,7 +229,8 @@ export function collectState({ logDir = LOG_DIR, registryPath = DEFAULT_REGISTRY
   const totalUsd = accounts.reduce((s, a) => s + ((a.player?.zenko_balance || 0) * price), 0);
   const strategyFlows24h = summarizeStrategyFlows(allEvents, { now });
   const sales = summarizeSales(allEvents);
-  return { accounts, price, totalUsd, totalAnalytics, serverTime: now, jupiterPriceUsd, goldFloorUsd, strategyFlows24h, sales };
+  const petGen = summarizePetGeneration(allEvents, { now }); // pets/hour + breeding by tier (last hour)
+  return { accounts, price, totalUsd, totalAnalytics, serverTime: now, jupiterPriceUsd, goldFloorUsd, strategyFlows24h, sales, petGen };
 }
 
 // Raw (un-bucketed) floor-by-rarity points + the Jupiter rate for the window — the frontend builds candles

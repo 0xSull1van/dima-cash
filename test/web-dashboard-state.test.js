@@ -199,3 +199,25 @@ test('summarizeSales backfills rarity/traits from our own market_list when the s
   assert.equal(row.species, 'florix');
   assert.equal(row.variant, 'normal');
 });
+
+// Pet generation per hour (2026-07-06, owner: "show how many pets and of what rarity we generate each hour").
+import { summarizePetGeneration } from '../scripts/serve-dashboard.js';
+
+test('summarizePetGeneration: hatches + breeding-by-tier within the last hour, older excluded', () => {
+  const now = Date.parse('2026-07-06T12:00:00Z');
+  const iso = (mAgo) => new Date(now - mAgo * 60000).toISOString();
+  const g = summarizePetGeneration([
+    { type: 'egg_hatch', ts: iso(10) },
+    { type: 'egg_hatch', ts: iso(50) },
+    { type: 'egg_hatch', ts: iso(90) },                          // >1h ago → excluded
+    { type: 'breed', ts: iso(5), meta: { minRarity: 'uncommon' } },
+    { type: 'breed', ts: iso(20), meta: { minRarity: 'uncommon' } },
+    { type: 'breed', ts: iso(40), meta: { minRarity: 'rare' } },
+    { type: 'breed', ts: iso(120), meta: { minRarity: 'epic' } }, // >1h ago → excluded
+    { type: 'dungeon_claim', ts: iso(5), amounts: { gold: 1 } },  // not a generation event → ignored
+  ], { now });
+  assert.equal(g.hatches, 2, 'only hatches within the last hour');
+  assert.equal(g.breeds, 3);
+  assert.deepEqual(g.breedsByRarity, { uncommon: 2, rare: 1 }, 'breeding split by the pair rarity (→ next-tier offspring)');
+  assert.equal(g.windowHours, 1);
+});
