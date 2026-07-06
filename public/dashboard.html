@@ -258,9 +258,11 @@ function initChart(){
   candleSeries = chart.addSeries(LWC.CandlestickSeries, {
     upColor:'#8fc98f', downColor:'#d98d84', wickUpColor:'#8fc98f', wickDownColor:'#d98d84',
     borderVisible:false,
-    priceFormat:{ type:'custom', minMove:0.000001, formatter: v => fmtVal(v, ui.unit) },
-    // floor price is never negative — without the clamp the lower scale margin (scaleMargins.bottom
-    // reserved for the volume band) would draw $-0.10/-0.20 ticks when low≈0
+    // floor price is never negative → blank any negative axis label. The bottom scaleMargin (reserved for
+    // the volume band) makes lightweight-charts extrapolate the price axis below 0 and draw −1,000/−2,000
+    // ticks even though the clamp below pins the DATA range at 0; hiding the labels in the formatter is the
+    // reliable fix (the clamp alone doesn't suppress margin ticks). Real data is always > 0, so nothing legit is hidden.
+    priceFormat:{ type:'custom', minMove:0.000001, formatter: v => v < 0 ? '' : fmtVal(v, ui.unit) },
     autoscaleInfoProvider: orig => { const r=orig(); if(r&&r.priceRange&&r.priceRange.minValue<0) r.priceRange.minValue=0; return r; },
   });
   volSeries = chart.addSeries(LWC.HistogramSeries, {
@@ -447,8 +449,12 @@ function renderAccounts(s){
     head.appendChild(top);
 
     const mid=el('div','cardMid');
+    // pendingEggs counts ALL non-hatched eggs (incubating + ready + queued in inventory), which can exceed
+    // the 6 incubator slots — showing "16/6" reads as nonsense. Show slots used (≤cap) and the overflow
+    // queued separately so the fraction always makes sense.
     const pend=a.counts?.pendingEggs||0;
-    mid.appendChild(el('span', pend>=INCUBATOR_CAP?'full':'', `incubating ${pend}/${INCUBATOR_CAP}`));
+    const inSlots=Math.min(pend, INCUBATOR_CAP), queued=Math.max(0, pend-INCUBATOR_CAP);
+    mid.appendChild(el('span', pend>=INCUBATOR_CAP?'full':'', `incubating ${inSlots}/${INCUBATOR_CAP}${queued?` · +${queued} queued`:''}`));
     mid.appendChild(el('span',null,`in raids ${activeRuns(a)}`));
     head.appendChild(mid);
 

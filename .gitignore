@@ -27,3 +27,6 @@ docs/
 
 # ── editor / backup artifacts ──
 *.bak
+
+# audit screenshots
+dash-*.png

@@ -181,3 +181,20 @@ test('summarizeSales carries account + rarity + traits (species/variant) into ea
   assert.equal(gold.rarity, null, 'fungible gold has no rarity → dashboard renders —');
   assert.equal(gold.species, null);
 });
+
+test('summarizeSales backfills rarity/traits from our own market_list when the sale record lacks them', () => {
+  const s = summarizeSales([
+    // we listed the creature (we know its traits) …
+    { type: 'market_list', ts: '2026-07-06T09:00:00Z', account: 'Kade',
+      ref: { listingId: 'LX', itemKind: 'creature', itemId: 'cr1' },
+      meta: { priceUsd: 0.04, rarity: 'rare', variant: 'normal', species: 'florix' } },
+    // … then it sold, but the my-sales API gave us NO rarity on the sale record
+    { type: 'market_sale', ts: '2026-07-06T11:00:00Z', account: 'Kade',
+      ref: { listingId: 'LX', itemKind: 'creature' },
+      amounts: { zolana: 150 }, meta: { priceUsd: 0.04 } },
+  ]);
+  const row = s.log[0];
+  assert.equal(row.rarity, 'rare', 'rarity backfilled from our own listing by listingId');
+  assert.equal(row.species, 'florix');
+  assert.equal(row.variant, 'normal');
+});

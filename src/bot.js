@@ -1442,9 +1442,13 @@ export class ZenkoBot {
           res = await listMarketItem(this.c, { itemKind, itemId: item.id, priceUsd });
         } else throw e;
       }
+      // Record the listed item's rarity/traits (we OWN it, so we know them for certain). The sales log
+      // backfills a sale's rarity from its listing by listingId — this works regardless of whether the
+      // my-sales API returns rarity on the sale record (the reliable source for "what sold").
+      const listTraits = itemKind === 'creature' ? marketTraitsOf(item) : {};
       this.recordEvent('market_list', {
         ref: { listingId: res?.id ?? null, itemKind, itemId: item.id },
-        meta: { priceUsd, floorUsd, currency: 'zenko' },
+        meta: { priceUsd, floorUsd, currency: 'zenko', ...listTraits },
       });
       const pct = itemKind === 'creature' && floorUsd > 0 ? ` ${priceUsd >= floorUsd ? '+' : '−'}${Math.abs(Math.round((priceUsd / floorUsd - 1) * 1000) / 10)}%` : '';
       const via = priceSource ? ` via ${priceSource}` : ''; // which pricing rung fired (species-clearing / rarity-clearing / seed / …)

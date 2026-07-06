@@ -100,18 +100,31 @@ export function summarizeStrategyFlows(events = [], { now = Date.now(), windowMs
 // ref.listingId — the old soldMarketIds bug wrote one sale up to 19 times (75 raw = 5 real, see memory);
 // the raw ledger still contains those duplicates, it can't be summed naively.
 export function summarizeSales(events = [], { limit = 50 } = {}) {
+  // listingId → the traits WE recorded when we listed the creature (we own it, so these are certain).
+  // The sale's own meta.rarity is preferred if present (from the my-sales API), but the my-sales API may
+  // not include rarity at all — so we backfill from our own listing by listingId. This is what makes the
+  // sales-log rarity reliable regardless of the sales-API shape (2026-07-06).
+  const listedTraits = new Map();
+  for (const e of events) {
+    if (e?.type !== 'market_list') continue;
+    const id = e.ref?.listingId;
+    if (id != null && (e.meta?.rarity || e.meta?.species || e.meta?.variant) && !listedTraits.has(id)) {
+      listedTraits.set(id, { rarity: e.meta?.rarity || null, variant: e.meta?.variant || null, species: e.meta?.species || null });
+    }
+  }
   const byListing = new Map();
   for (const e of events) {
     if (e?.type !== 'market_sale') continue;
     const key = e.ref?.listingId || e.id;
     if (byListing.has(key)) continue;
+    const listed = listedTraits.get(e.ref?.listingId) || {};
     byListing.set(key, {
       ts: e.ts,
       account: e.account,
       itemKind: e.ref?.itemKind || 'item',
-      rarity: e.meta?.rarity || null,   // 2026-07-06: what actually sold — rarity + traits for the sales log
-      variant: e.meta?.variant || null,
-      species: e.meta?.species || null,
+      rarity: e.meta?.rarity || listed.rarity || null,   // 2026-07-06: what actually sold — sale meta first, else our own listing record
+      variant: e.meta?.variant || listed.variant || null,
+      species: e.meta?.species || listed.species || null,
       zolana: Number(e.amounts?.zolana) || 0,
       usd: Number(e.meta?.priceUsd) || 0,
       buyer: e.ref?.buyer || null,
