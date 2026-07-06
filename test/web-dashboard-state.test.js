@@ -131,6 +131,20 @@ test('summarizeStrategyFlows: sums by type within a 24h window, ignores out-of-w
   assert.equal(flows.egg_buy.count, 0, 'types with no events are present with zeros (the frontend does not check for the key)');
 });
 
+test('summarizeStrategyFlows: market_sale is deduped by listingId (raw ledger holds re-record duplicates)', () => {
+  const now = Date.parse('2026-07-06T12:00:00Z');
+  const iso = (hAgo) => new Date(now - hAgo * 3600 * 1000).toISOString();
+  const flows = summarizeStrategyFlows([
+    { type: 'market_sale', ts: iso(1), ref: { listingId: 'L1' }, amounts: { zolana: 100 } },
+    { type: 'market_sale', ts: iso(1), ref: { listingId: 'L1' }, amounts: { zolana: 100 } }, // duplicate re-record of L1
+    { type: 'market_sale', ts: iso(2), ref: { listingId: 'L2' }, amounts: { zolana: 50 } },
+    { type: 'breed', ts: iso(1), ref: { listingId: 'L1' }, amounts: { gold: -1 } }, // non-sale: listingId irrelevant, not deduped
+  ], { now });
+  assert.equal(flows.market_sale.count, 2, 'two DISTINCT sales, not three raw events');
+  assert.equal(flows.market_sale.zolana, 150, 'zolana not inflated by the duplicate');
+  assert.equal(flows.breed.count, 1, 'non-sale types are never deduped');
+});
+
 // Sales for the dashboard redesign (2026-07-06): dedup by listingId is mandatory — the raw ledger contains
 // historical duplicates (one sale recorded up to 19 times, see the sold-ids bug).
 import { summarizeSales } from '../scripts/serve-dashboard.js';

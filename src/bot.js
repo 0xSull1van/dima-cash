@@ -174,7 +174,14 @@ export class ZenkoBot {
       forgeMinGold: 400000,                  // forge ONLY when gold ≥ this — protects the egg/breed budget (rich accounts only)
       forgeRetryMs: 60 * 60 * 1000,          // forge-attempt throttle (a daily action, no point spamming)
       afkZone: true,           // AFK zone: ×2 stamina regen
-      autoBuyEggs: false,      // buying eggs for Gold — off by default
+      autoBuyEggs: false,      // ongoing buying of eggs for Gold — off by default (established accounts breed only)
+      // New-account bootstrap: a fresh account buys a one-time batch of 50k elemental eggs to seed a
+      // breeding roster, then breeds only (see handleEggs). Off by default; the farm profile turns it on.
+      // Auto-gated to new accounts (small roster + few lifetime egg buys) so it never touches established ones.
+      bootstrapEggBuy: false,
+      bootstrapEggCount: 6,          // how many 50k eggs a new account buys, total, ever
+      bootstrapRosterMax: 12,        // only bootstrap while the roster is below this (i.e. a new account)
+      bootstrapEggTypes: ELEMENTAL_EGGS, // the 50k elemental eggs, rotated for species variety
       elementalEggAfter: 20,   // after N pets, switch from basic (2500) to elemental (50k, 20% Rare)
       elementalEggTypes: ELEMENTAL_EGGS, // which types to rotate after elementalEggAfter (farm sets ['lux'] — uncommon breeding stock)
       eggBuyDailyCap: Infinity, // max egg purchases per UTC day (farm sets 20 — friend: "buy about 20")
@@ -632,7 +639,11 @@ export class ZenkoBot {
       state = await this.c.api('/api/player/load');
     } catch (e) {
       if (e.maintenance || this.inMaintenance()) {
-        this.log('maintenance — server is restarting, skipping tick, backoff');
+        // Show the backoff so it's clearly waiting-not-stuck. maintenanceWaitMs is set by the client on the
+        // hit that armed the pause; otherwise derive the remaining wait from maintenanceUntil.
+        const waitMs = e.maintenanceWaitMs ?? Math.max(0, (this.c?.maintenanceUntil || 0) - Date.now());
+        const mins = waitMs >= 60000 ? `${Math.round(waitMs / 60000)}m` : `${Math.round(waitMs / 1000)}s`;
+        this.log(`maintenance — server updating, waiting ~${mins} before next probe (no spam)`);
         return this.lastLiveState || null;
       }
       throw e;
@@ -837,13 +848,13 @@ export class ZenkoBot {
     const totalPlanned = plan.unequip.length + plan.equip.length;
     let budget = cap;
     for (const u of plan.unequip) {
-      if (budget-- <= 0) break;
+      if (budget-- <= 0 || this.inMaintenance()) break; // stop the moment a mid-tick patch arms — don't cascade local 503s
       try { await this.act('/api/relic/unequip', { relicId: u.relicId }); }
       catch (e) { if (![400, 402, 409].includes(e.status)) this.log('relic unequip err', e.status, (e.bodyText || '').slice(0, 60)); }
     }
     let equipped = 0;
     for (const e of plan.equip) {
-      if (budget-- <= 0) break;
+      if (budget-- <= 0 || this.inMaintenance()) break; // ditto — a 503 here means the server went down mid-tick
       try {
         await this.act('/api/relic/equip', { relicId: e.relicId, target: e.target, slot: e.slot });
         equipped++;
@@ -1587,6 +1598,53 @@ export class ZenkoBot {
           if (e.status !== 400) this.log('egg buy err', e.status, (e.bodyText || '').slice(0, 70));
           if ([400, 402, 409].includes(e.status)) this.nextEggBuyAt = now + this.cfg.eggBuyRetryMs;
           break;
+        }
+      }
+    }
+
+    // Bootstrap egg-buy for NEW accounts (2026-07-06, owner: "for new accounts, buy 6 eggs at 50k, and
+    // later just breed on cooldown"). A brand-new account has no roster to breed from, so it buys a
+    // one-time batch of 50k elemental eggs to seed breeding stock, then never buys again — breeding
+    // (autoBreed) takes over. Separate from autoBuyEggs (which stays OFF for established accounts).
+    // Auto-gated so it never touches an established account: fires only while the roster is small
+    // (bootstrapRosterMax — i.e. a new account) AND the account's LIFETIME egg_buy count (from the ledger,
+    // so it survives --watch restarts) is below bootstrapEggCount. Established accounts (roster ~50, or a
+    // ledger full of past buys) skip it instantly; a fresh account buys exactly bootstrapEggCount 50k eggs
+    // across however many ticks Gold allows (it earns Gold from its starter creature's dungeon runs).
+    if (this.cfg.bootstrapEggBuy && now >= this.nextEggBuyAt) {
+      const roster = (state.creatures || []).length;
+      const rosterMax = Number(this.cfg.bootstrapRosterMax ?? 12);
+      const targetCount = Math.max(0, Number(this.cfg.bootstrapEggCount ?? 6));
+      if (roster < rosterMax && targetCount > 0) {
+        // Lifetime egg_buy count — read once from the ledger (cheap: a new account's ledger is tiny), then
+        // kept in memory. Established accounts never reach here (roster gate above), so a large ledger is
+        // never loaded on this path. Guards against re-buying the batch after a --watch restart.
+        if (this.bootstrapEggsBought == null) {
+          this.bootstrapEggsBought = this.loadLedgerEvents().filter(e => e.type === 'egg_buy').length;
+        }
+        const types = Array.isArray(this.cfg.bootstrapEggTypes) && this.cfg.bootstrapEggTypes.length
+          ? this.cfg.bootstrapEggTypes : ELEMENTAL_EGGS;
+        const reserve = this.cfg.minGoldReserve || 0;
+        let gold = state.player?.gold ?? 0;
+        // Pace by the incubator queue (eggQueueTarget) so we don't overfill it; the lifetime count is the
+        // real stop. A new account has no breeding eggs competing for slots, so its bootstrap eggs cook freely.
+        while (this.bootstrapEggsBought < targetCount && pendingEggs < this.cfg.eggQueueTarget) {
+          const type = types[this.elemIdx % types.length];
+          const cost = EGG_COST[type] || 50000;
+          if (gold < reserve + cost) { this.nextEggBuyAt = now + this.cfg.eggBuyRetryMs; break; } // can't afford yet — retry as Gold accrues from dungeons
+          try {
+            await this.act('/api/egg/buy', { eggType: type });
+            this.bootstrapEggsBought++;
+            this.log(`BOOTSTRAP buy ${type} egg (${cost} gold) [${this.bootstrapEggsBought}/${targetCount}]`);
+            this.recordEvent('egg_buy', { amounts: { gold: -cost }, ref: { eggType: type }, meta: { bootstrap: true, rosterBefore: roster } });
+            this.elemIdx++;
+            gold -= cost;
+            pendingEggs++;
+          } catch (e) {
+            if (e.status !== 400) this.log('bootstrap egg buy err', e.status, (e.bodyText || '').slice(0, 70));
+            if ([400, 402, 409].includes(e.status)) this.nextEggBuyAt = now + this.cfg.eggBuyRetryMs;
+            break;
+          }
         }
       }
     }

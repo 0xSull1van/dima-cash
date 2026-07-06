@@ -68,11 +68,22 @@ export function summarizeStrategyFlows(events = [], { now = Date.now(), windowMs
   const start = now - windowMs;
   const out = {};
   for (const type of STRATEGY_FLOW_TYPES) out[type] = { count: 0, gold: 0, zolana: 0 };
+  // market_sale carries historical duplicates in the raw ledger (the soldMarketIds re-record bug — see
+  // summarizeSales) so the raw count/zolana are inflated; dedup by listingId to keep this consistent with
+  // the deduped sales figure (found 2026-07-06: raw 24h market_sale=65 vs 17 real distinct sales).
+  const seenSale = new Set();
   for (const event of events) {
     const bucket = out[event?.type];
     if (!bucket) continue;
     const t = Date.parse(event?.ts || '');
     if (!Number.isFinite(t) || t < start || t > now) continue;
+    if (event.type === 'market_sale') {
+      const key = event.ref?.listingId || event.id;
+      if (key != null) { // only dedup when there's a real key; a keyless event can't be a re-record dupe
+        if (seenSale.has(key)) continue;
+        seenSale.add(key);
+      }
+    }
     bucket.count++;
     bucket.gold += Number(event?.amounts?.gold) || 0;
     bucket.zolana += Number(event?.amounts?.zolana) || 0;

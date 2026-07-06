@@ -24,6 +24,15 @@ export function farmTradingConfig(overrides = {}) {
     // dungeon drops. The lux-buying mechanism (elementalEggTypes/eggBuyDailyCap) stays in the code,
     // disabled — re-enabling is one line.
     autoBuyEggs: false,
+    // New-account bootstrap (2026-07-06, owner: "for new accounts, buy 6 eggs at 50k, and later just breed
+    // on cooldown"): a fresh account has nothing to breed, so it buys a one-time batch of 6 × 50k elemental
+    // eggs to seed breeding stock, then breeds only (autoBreed). Auto-gated to new accounts
+    // (roster < bootstrapRosterMax), so established accounts (roster ~50) are untouched; autoBuyEggs stays
+    // OFF (no ongoing buying). See handleEggs. This is the ONLY egg buying that happens now.
+    bootstrapEggBuy: true,
+    bootstrapEggCount: 6,
+    bootstrapRosterMax: 12,
+    bootstrapEggTypes: ['forest', 'ocean', 'mountain', 'volcano', 'sky'], // 50k elemental eggs (20% Rare), rotated for species variety
     autoBuyStamina: true,
     feed: true,                          // feed Baby/Juv→Adult (stage-gated in handleFeeding): accumulates creature_xp → handleEvolve(useXp) skips the maturation timer → party_power↑ (stage) + Adult stock for breeding. Don't feed Adult/Elder.
     feedMaxPerTick: 10,                  // 2026-07-06: breeding stock of Babies matures via feeds (Baby→Juv 5 feeds, Juv→Adult 13, cooldown 11m/pet); after an egg burst accounts have 30+ Babies — the default cap of 3 choked the conveyor (~2.2 feeds/min when ~3.3 was needed), 10 per tick covers 36+ youngsters

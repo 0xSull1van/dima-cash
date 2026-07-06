@@ -12,13 +12,40 @@ const BASE = 'https://play.zolana.gg';
 const DOMAIN = 'zolana.gg'; // constant from the bundle (not location.host)
 const SIGN_TAIL = '\nSigning once authorizes this device to act for 8h. No funds move.';
 
-// During a deploy/patch the server replies 503 { error:"Restarting Server", maintenance:{mode:"full"}, code:"MAINT..." }.
-// So the fleet doesn't hammer a restarting server (and doesn't stand out with a burst of retries), on the
-// first such reply we "arm" a short pause and instantly reject subsequent calls, without network, until it ends.
-const MAINTENANCE_BACKOFF_MS = 90_000;
+// During a deploy/patch the server replies 503, e.g. { error:"Restarting Server", maintenance:{mode:"full"} }
+// or { error:"New Server + Bug Fixes. ETA 20-35 Min." }. So the fleet doesn't hammer a restarting server
+// (and doesn't stand out with a burst of retries), on such a reply we "arm" a pause and instantly reject
+// subsequent calls — without network — until it ends. The pause ESCALATES across consecutive maintenance
+// hits (base → cap) and honours a parsed ETA, so a long patch is waited out with a handful of probes, not
+// one every 90s for 35 minutes (found 2026-07-06: an "ETA 20-35 Min" patch had the fleet re-probing ~15×
+// per account). The streak resets on the first successful call (server back).
+const MAINTENANCE_BASE_MS = 90_000;        // first probe delay when no ETA is given
+const MAINTENANCE_CAP_MS = 10 * 60_000;    // escalation ceiling per additional consecutive hit
+const MAINTENANCE_MAX_MS = 40 * 60_000;    // hard cap on any single wait (a bogus "ETA 999 Min" can't freeze us)
 export function isMaintenanceError(e) {
   if (!e || e.status !== 503) return false;
-  return /maintenance|restarting server|"code":"maint/i.test(String(e.bodyText || e.message || ''));
+  // Any 503 during a patch is maintenance; match the patch-style phrasings the game uses so we never
+  // treat a "New Server + Bug Fixes. ETA …" reply as a hard error and keep hammering it.
+  return /maintenance|restarting server|"code":"maint|new server|bug fixes|be right back|updating|eta\s*[~:]?\s*\d/i.test(String(e.bodyText || e.message || ''));
+}
+
+// Parse an ETA (minutes) from a maintenance message → the LOW end in ms, or null. "ETA 20-35 Min" → 20m;
+// "be right back in ~15 minutes" → 15m. We wait the low end so the first probe lands around when it MIGHT
+// be back, then escalation takes over if it's running late. A single parsed ETA is capped at 60m for sanity.
+export function parseMaintenanceEtaMs(text) {
+  const s = String(text || '');
+  let m = /eta[^\d]{0,6}(\d{1,3})/i.exec(s);                       // "ETA 20-35 Min" → 20
+  if (!m) m = /(\d{1,3})\s*(?:-\s*\d{1,3}\s*)?(?:min|minute)/i.exec(s); // "15 minutes"
+  const mins = m ? Number(m[1]) : NaN;
+  if (!Number.isFinite(mins) || mins <= 0) return null;
+  return Math.min(mins, 60) * 60_000;
+}
+
+// The next-probe delay for a maintenance hit: max(parsed ETA low-end, escalating base), capped.
+// streak is 1 on the first consecutive hit, 2 on the next, … → 90s, 3m, 6m, 10m, 10m… (base×2^(streak-1)).
+export function maintenanceWaitMs(streak, etaMs) {
+  const escalating = Math.min(MAINTENANCE_BASE_MS * 2 ** Math.max(0, streak - 1), MAINTENANCE_CAP_MS);
+  return Math.min(Math.max(etaMs || 0, escalating), MAINTENANCE_MAX_MS);
 }
 
 // Default request timeout. Without it a hung/dropped proxy hangs the await FOREVER: fetch neither
@@ -46,6 +73,7 @@ export class ZenkoClient {
     this.token = null;
     this.expiresAt = 0;
     this.maintenanceUntil = 0; // until this time the server is treated as under maintenance — calls rejected immediately
+    this.maintenanceStreak = 0; // consecutive maintenance hits → escalating backoff (see maintenanceWaitMs)
     this.requestTimeoutMs = requestTimeoutMs;
     this.sessionPath = sessionPath;
     this.#restoreSession();
@@ -173,16 +201,23 @@ export class ZenkoClient {
     const method = body === undefined ? 'GET' : 'POST';
     try {
       await this.ensureAuth();
-      return await this.#raw(path, { method, body });
+      const r = await this.#raw(path, { method, body });
+      this.maintenanceStreak = 0; // a successful call = server is back; next patch starts fresh at base backoff
+      return r;
     } catch (e) {
       if (e.status === 401) {
         this.token = null;
         await this.login();
-        return this.#raw(path, { method, body });
+        const r = await this.#raw(path, { method, body });
+        this.maintenanceStreak = 0;
+        return r;
       }
       if (isMaintenanceError(e)) {
-        this.maintenanceUntil = Date.now() + MAINTENANCE_BACKOFF_MS;
+        this.maintenanceStreak = (this.maintenanceStreak || 0) + 1;
+        const waitMs = maintenanceWaitMs(this.maintenanceStreak, parseMaintenanceEtaMs(e.bodyText || e.message));
+        this.maintenanceUntil = Date.now() + waitMs;
         e.maintenance = true;
+        e.maintenanceWaitMs = waitMs; // surfaced so the bot can log "waiting ~Nm" instead of a bare error
       }
       throw e;
     }

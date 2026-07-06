@@ -366,10 +366,13 @@ function mergedFloors(accounts){
   }
   return best;
 }
-// account value in ZOL: pets×floor×0.70 + gold→USD→ZOL×0.70 (haircut — liquidation into the book)
+// account value in ZOL: SELLABLE pets×floor×0.70 + gold→USD→ZOL×0.70 (haircut — liquidation into the book).
+// Bound pets (onboarding stock + bound offspring) can NEVER be listed on the market, so counting them at
+// floor overstates realizable worth — we skip them, matching the bot's own unboundOnly valuation (petValue).
 function accountValueZol(a, floors, jup, goldFloorUsd){
   let pets=0;
   for(const c of (a.creaturesList||[])){
+    if(c.bound) continue; // not realizable — can't be sold
     const f = floors[String(c.rarity||'').toLowerCase()];
     if(f>0) pets += f*VALUE_HAIRCUT;
   }
@@ -391,7 +394,7 @@ function renderKpis(s){
   let fleet=0;
   for(const a of s.accounts||[]) fleet += accountValueZol(a, floors, jup, s.goldFloorUsd||0);
   setValUnit('kFleetZ', fmtZ(fleet), 'ZOL');
-  $('kFleetSub').textContent = `${fmtUsd(fleet*jup)} · haircut ×${VALUE_HAIRCUT}`;
+  $('kFleetSub').textContent = `${fmtUsd(fleet*jup)} · sellable · haircut ×${VALUE_HAIRCUT}`;
 
   $('kRate').textContent = jup>0 ? '$'+jup.toFixed(6) : '—';
 
