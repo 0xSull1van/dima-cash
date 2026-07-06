@@ -70,3 +70,64 @@ test('runs graduate when the roster is full but NO eggs are ready (nothing to pr
 
   assert.equal(graduate, true, 'no ready eggs → graduate runs (no hatch to prioritize)');
 });
+
+// 2026-07-06 (owner: "не клеймятся петты / инкубация зависла" #2 — Nova/Ember stuck 30min): the valves burn
+// their 5-15/3-8min cooldown even on a MISS, so on a fully-dispatched full-roster account they never catch a
+// free creature to free a slot. When eggs are blocked, zero the vault+intake cooldowns → retry every tick.
+test('eggs blocked behind a full roster → vault + intake cooldowns are zeroed (retry every tick)', async () => {
+  const bot = makeBot({ vaultRosterFull: 3, vaultBreedingPoolTarget: 10 });
+  bot.handleVaultGraduate = async () => false;
+  bot.handleVaultIntake = async () => false; // stubbed so it doesn't re-arm the cooldown (real one would)
+  const future = Date.now() + 999999;
+  bot.nextVaultAt = future; bot.nextVaultIntakeAt = future;
+
+  await bot.handleDungeons({
+    player: { gold: 0, stamina: 0 },
+    creatures: [{ id: 'a' }, { id: 'b' }, { id: 'c' }], // roster 3 >= 3 → FULL
+    eggs: [{ id: 'e1', status: 'ready' }],
+    dungeonRuns: [],
+  });
+
+  assert.equal(bot.nextVaultAt, 0, 'pressure-valve cooldown zeroed so it retries this tick');
+  assert.equal(bot.nextVaultIntakeAt, 0, 'intake cooldown zeroed so it retries this tick');
+});
+
+test('roster has room → cooldowns are NOT reset (normal human cadence preserved)', async () => {
+  const bot = makeBot({ vaultRosterFull: 10 });
+  bot.handleVaultGraduate = async () => false;
+  bot.handleVaultIntake = async () => false;
+  const future = Date.now() + 999999;
+  bot.nextVaultAt = future; bot.nextVaultIntakeAt = future;
+
+  await bot.handleDungeons({
+    player: { gold: 0, stamina: 0 },
+    creatures: [{ id: 'a' }], // roster 1 < 10 → room
+    eggs: [{ id: 'e1', status: 'ready' }],
+    dungeonRuns: [],
+  });
+
+  assert.equal(bot.nextVaultAt, future, 'cooldown untouched when not blocked');
+  assert.equal(bot.nextVaultIntakeAt, future, 'intake cooldown untouched when not blocked');
+});
+
+// The every-tick intake can fill the vault to its target fast; if BOTH roster and vault are full, skipping
+// graduate would deadlock (intake can't move anything in). So graduate must run to drain the vault.
+test('vault ALSO full + eggs blocked → graduate RUNS (drains vault, avoids roster+vault deadlock)', async () => {
+  const bot = makeBot({ vaultRosterFull: 3, vaultBreedingPoolTarget: 2, vaultBreedingRarities: ['uncommon'] });
+  let graduate = false;
+  bot.handleVaultGraduate = async () => { graduate = true; return false; };
+  bot.handleVaultIntake = async () => false;
+
+  await bot.handleDungeons({
+    player: { gold: 0, stamina: 0 },
+    creatures: [{ id: 'a' }, { id: 'b' }, { id: 'c' }],       // roster 3 = full
+    stored: { creatures: [                                     // vault pool 2 >= target 2 → vault FULL
+      { id: 'v1', rarity: 'uncommon', breed_count: 0, stored: true },
+      { id: 'v2', rarity: 'uncommon', breed_count: 0, stored: true },
+    ] },
+    eggs: [{ id: 'e1', status: 'ready' }],
+    dungeonRuns: [],
+  });
+
+  assert.equal(graduate, true, 'vault full → graduate drains it instead of being skipped');
+});

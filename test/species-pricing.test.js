@@ -88,13 +88,39 @@ test('ideal price: species with < minSamples sales uses its own floor, not the w
   assert.equal(r.priceUsd, 0.20);
 });
 
-test('ideal price: falls back to rarity clearing when the species never traded', () => {
+test('ideal price: falls back to rarity clearing when the species never traded (≥ minSamples sales)', () => {
   const r = price({
     species: 'neverseen', rarity: 'uncommon', variant: 'normal',
-    metricsBySpecies: {}, clearingUsdByRarity: { uncommon: 0.08 },
+    metricsBySpecies: {}, clearingUsdByRarity: { uncommon: 0.08 }, clearingCountByRarity: { uncommon: 3 },
   });
   assert.equal(r.source, 'rarity-clearing');
   assert.equal(r.priceUsd, 0.08);
+});
+
+// 2026-07-06 (owner "почему так дорого листим" — Vortex listed an Uncommon at $1.67 on a $0.05 floor): the
+// rarity median had NO minSamples guard, so a single outlier external sale set the price. Now it needs
+// ≥ minSamples sales or it's dropped in favour of the floor/seed.
+test('ideal price: rarity clearing from < minSamples sales is IGNORED (thin-data guard) → seed', () => {
+  const r = price({
+    species: 'neverseen', rarity: 'uncommon', variant: 'normal',
+    metricsBySpecies: {},
+    clearingUsdByRarity: { uncommon: 1.75 }, // one $1.75 outlier sale …
+    clearingCountByRarity: { uncommon: 1 },   // … only 1 sample → not trusted
+    floorZolanaByRarity: {}, zolanaPriceUsd: null, // no live floor → uncommon seed 0.03
+  });
+  assert.equal(r.source, 'seed', 'the lone-sale median is dropped; price falls to the seed');
+  assert.equal(r.priceUsd, 0.03, 'sane seed price, not $1.67');
+});
+
+test('ideal price: sanity cap blocks an absurd clearing even with enough samples (floor × cashoutMaxPriceOverFloor)', () => {
+  const r = price({
+    species: 'neverseen', rarity: 'uncommon', variant: 'normal',
+    metricsBySpecies: {},
+    clearingUsdByRarity: { uncommon: 1.75 }, clearingCountByRarity: { uncommon: 4 }, // trusted, but absurd
+    floorZolanaByRarity: { uncommon: 250 }, zolanaPriceUsd: 0.0002, // live floor 250 × 0.0002 = $0.05
+  });
+  assert.equal(r.source, 'rarity-clearing');
+  assert.equal(r.priceUsd, 0.5, 'capped at floor $0.05 × 10, not $1.66');
 });
 
 test('ideal price: seed floor is the last resort', () => {

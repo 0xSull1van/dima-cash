@@ -19,6 +19,7 @@ test('farmTradingConfig enables seller-side trading while keeping human cadence'
   assert.equal(cfg.cashoutAskUndercutPct, 0.05);
   assert.equal(cfg.cashoutRepriceDecayPct, 0.12); // залежался час → −12% от своей цены, ступенями до уровня спроса
   assert.equal(cfg.cashoutMinPriceUsd, 0.01);    // дефолт $0.05 клампил бы скидку ВЫШЕ флора uncommon (~$0.02-0.03)
+  assert.equal(cfg.cashoutMaxPriceOverFloor, 10); // 2026-07-06: sanity cap — thin/outlier clearing gave $1.67 на $0.05 floor
   assert.equal(cfg.cashoutListChance, 0.6);      // Task-1: хаотичный момент листинга (не clockwork)
   assert.equal(cfg.autoVaultWhenFull, true);     // «рарки в сейф» когда ростер полон
   assert.equal(cfg.autoVaultSwap, true);         // 2026-07-05: continuous флот↔сейф полировка состава

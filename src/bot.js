@@ -666,6 +666,10 @@ export class ZenkoBot {
         const { floors, counts, clearingUsd, metricsBySpecies, velocity } = await getCreatureFloorAndVolumeByRarity(this.c, { zolanaPriceUsd: this.priceUsd, fleetWallets: this.cfg.fleetWallets });
         // clearing (median of real sales, USD) — merge over last-known-good, like floors below
         if (clearingUsd && Object.keys(clearingUsd).length) this.creatureClearingUsd = { ...(this.creatureClearingUsd || {}), ...clearingUsd };
+        // sale COUNT per rarity (same normal+external filter) — merged in lockstep with clearing so the
+        // thin-data guard in creatureIdealPriceUsd knows how many sales are behind each median (a lone
+        // outlier sale must NOT set the price — the $1.67 Uncommon, owner 2026-07-06).
+        if (counts && Object.keys(counts).length) this.creatureSalesCount = { ...(this.creatureSalesCount || {}), ...counts };
         // Also snapshot the clearing (median) price per rarity in ZOLANA — the chart plots THIS, not the
         // raw min-floor: the min whipsaws 15× on a thin market (found live: common min 40 / median 501 /
         // max 7625), the median is the stable "price it actually sells at". Same USD→ZOLANA conversion as floors.
@@ -1411,6 +1415,7 @@ export class ZenkoBot {
         metricsBySpecies: this.creatureMetricsBySpecies || {},
         asksBySpecies: creatureAsksBySpecies(listingRows, mkOpts),
         clearingUsdByRarity: this.creatureClearingUsd || {},
+        clearingCountByRarity: this.creatureSalesCount || {}, // thin-data guard: don't trust a 1-sale median
         asksByRarity: creatureAsksByRarity(listingRows, mkOpts),
         floorZolanaByRarity: this.creatureFloorZolana || {},
         zolanaPriceUsd: this.priceUsd,
@@ -1808,6 +1813,19 @@ export class ZenkoBot {
       try { workingState = await this.c.api('/api/player/load'); }
       catch (e) { this.log('post-claim reload err', e.status || '', (e.bodyText || e.message || '').slice(0, 80)); }
     }
+    // Ready eggs blocked behind a FULL roster (found live 2026-07-06: Nova/Ember pinned at roster 50 / 6
+    // ready eggs / 0 hatches / 0 vault+intake for 30 min, while roster-48 accounts hatched fine). Each
+    // slot-freeing valve (pressure-vault + breeding intake) burns its cooldown (5-15 / 3-8 min) even on a
+    // MISS — no free eligible creature in that tick's tiny post-claim window — so on a fully-dispatched
+    // account the valves keep "trying" 3-8 min apart and each attempt lands when everything is busy → the
+    // eggs starve indefinitely. When eggs are blocked, ZERO those two cooldowns so the valves RETRY EVERY
+    // TICK until a just-claimed creature is free to hide → a slot frees → hatch (step 2c below). Self-limiting:
+    // the roster un-fills the instant an egg hatches. Recycle's cooldown is left alone (it DESTROYS commons —
+    // keep it on its own cadence, it's not the reliable lever on these uncommon-heavy rosters anyway).
+    const eggsBlockedFullRoster = (workingState.creatures || []).length >= (Number(this.cfg.vaultRosterFull) || 49)
+      && (workingState.eggs || []).some(e => e.status === 'ready'
+        || (e.status === 'incubating' && e.hatch_ready_at && parseTime(e.hatch_ready_at) <= now));
+    if (eggsBlockedFullRoster) { this.nextVaultAt = 0; this.nextVaultIntakeAt = 0; }
     // 2) recycle AFTER claim, BEFORE dispatch: the just-claimed commons are now free (run_id cleared), we
     //    sacrifice them into XP for the account's best Rare+ pet and free squad slots for hatching eggs. If
     //    we sacrificed — reload state so dispatch doesn't try to send an already-deleted pet.
@@ -1843,10 +1861,16 @@ export class ZenkoBot {
       // full AND eggs are waiting, SKIP graduate so intake actually NET-frees active slots for hatching —
       // new pets take priority; the exhausted breeders wait in the vault (useless for breeding anyway) and
       // graduate resumes once hatching/selling makes room.
-      const rosterFull = (workingState.creatures || []).length >= (Number(this.cfg.vaultRosterFull) || 49);
-      const readyEggs = (workingState.eggs || []).some(e => e.status === 'ready'
-        || (e.status === 'incubating' && e.hatch_ready_at && parseTime(e.hatch_ready_at) <= now));
-      if (!(rosterFull && readyEggs)) await this.handleVaultGraduate(workingState);
+      // Skip graduate when eggs are blocked so intake NET-frees a hatch slot — UNLESS the breeding pool is
+      // ALSO full (intake can't move anything in, poolSize>=target), in which case graduate MUST run to
+      // drain the vault (→ active → sale) or roster+vault deadlock and no slot ever frees. (The current
+      // stuck accounts have vault 30/60 → room → graduate stays skipped; this guards the vault-full case
+      // that the more-aggressive every-tick intake above can now reach faster.)
+      const vaultRarities = (this.cfg.vaultBreedingRarities || ['uncommon', 'rare', 'epic']).map(r => String(r).toLowerCase());
+      const vaultPool = this.allCreatures(workingState).filter(c => c.stored === true
+        && vaultRarities.includes(String(c.rarity || '').toLowerCase()) && (Number(c.breed_count) || 0) < 8).length;
+      const vaultHasRoom = vaultPool < (Number(this.cfg.vaultBreedingPoolTarget) || 0);
+      if (!(eggsBlockedFullRoster && vaultHasRoom)) await this.handleVaultGraduate(workingState);
       const intaken = await this.handleVaultIntake(workingState);
       if (intaken) {
         freedSlot = true;

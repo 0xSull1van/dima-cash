@@ -109,6 +109,9 @@ export function farmTradingConfig(overrides = {}) {
     // rarity then seed — see creatureIdealPriceUsd. Trust a species' median only with ≥2 real sales;
     // below that the market is too thin for that species and we use its floor, then the rarity signal.
     cashoutSpeciesMinSamples: 2,
+    cashoutMaxPriceOverFloor: 10,  // 2026-07-06 ("почему так дорого листим"): a thin/outlier clearing median
+    // priced an Uncommon at $1.67 on a $0.05 floor (+3240%). Sanity cap = floor × this; a real median runs a
+    // few× the min-floor on a thin market, so 10× is generous but blocks a polluted price from listing us out.
     cashoutAskUndercutPct: 0.05,
     cashoutRepriceDecayPct: 0.12,
     cashoutMinPriceUsd: 0.01,

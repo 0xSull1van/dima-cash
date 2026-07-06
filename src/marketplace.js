@@ -429,6 +429,7 @@ export function creatureIdealPriceUsd({
   species, rarity, variant = null,
   metricsBySpecies = {}, asksBySpecies = {},
   clearingUsdByRarity = {}, asksByRarity = {},
+  clearingCountByRarity = {}, // # of external normal sales behind each rarity median — for the thin-data guard
   floorZolanaByRarity = {}, zolanaPriceUsd = null,
   cfg = {}, rng = Math.random,
 } = {}) {
@@ -439,7 +440,17 @@ export function creatureIdealPriceUsd({
   const minPriceUsd = cfg.cashoutMinPriceUsd;
   const minSamples = Math.max(1, Number(cfg.cashoutSpeciesMinSamples ?? 2));
 
-  // 1) explicit (rarity,variant) override wins over everything (special variants)
+  // Sanity ceiling: never price absurdly above THIS rarity's floor. A thin/outlier clearing median once
+  // priced an Uncommon at $1.67 on a $0.05 floor (+3240% — owner 2026-07-06 "почему так дорого листим").
+  // floor × cashoutMaxPriceOverFloor is a generous cap (a real median runs a few× the min-floor on a thin,
+  // volatile market) that still blocks a polluted price. A manual variant-override is intentionally exempt.
+  const rarityFloorUsd = creatureFloorUsdForRarity(rarity, floorZolanaByRarity, zolanaPriceUsd, variant);
+  const maxOverFloor = Math.max(1, Number(cfg.cashoutMaxPriceOverFloor) || 10);
+  const cap = (out) => (out && rarityFloorUsd > 0)
+    ? { ...out, priceUsd: Math.min(out.priceUsd, rarityFloorUsd * maxOverFloor) }
+    : out;
+
+  // 1) explicit (rarity,variant) override wins over everything (special variants) — not capped (manual price)
   if (variant != null) {
     const override = CREATURE_VARIANT_PRICE_OVERRIDE_USD[`${rar}:${lower(variant)}`];
     if (override != null) return { priceUsd: override, source: 'variant-override' };
@@ -451,23 +462,26 @@ export function creatureIdealPriceUsd({
   if (spm) {
     const speciesClearing = (spm.count >= minSamples) ? spm.clearingUsd : null; // one sale is a weak median
     const plan = planDemandPrice({ clearingUsd: speciesClearing, lowestAskUsd: spa.external, fleetAskUsd: spa.fleet, askUndercutPct, jitterPct, minPriceUsd, rng });
-    if (plan) return { priceUsd: plan.priceUsd, source: plan.source === 'clearing' ? 'species-clearing' : 'species-ask' };
+    if (plan) return cap({ priceUsd: plan.priceUsd, source: plan.source === 'clearing' ? 'species-clearing' : 'species-ask' });
     if (spm.floorUsd > 0) { // sub-minSamples and no ask → the species' own floor is still better than rarity
       const org = planOrganicPrice({ floorUsd: spm.floorUsd, jitterPct, minPriceUsd, rng });
-      if (org) return { priceUsd: org.priceUsd, source: 'species-floor' };
+      if (org) return cap({ priceUsd: org.priceUsd, source: 'species-floor' });
     }
   }
 
-  // 3) rarity demand — the previous behavior, the fallback for thin/never-traded species
+  // 3) rarity demand — the previous behavior, the fallback for thin/never-traded species. The rarity
+  //    median needs the SAME thin-data guard the species median has above (line: spm.count >= minSamples):
+  //    without it a single outlier external sale set the rarity clearing (→ the $1.67 Uncommon). Below
+  //    minSamples, drop the clearing and let the ask / floor / seed price it.
   const ra = asksByRarity[rar] || {};
-  const rarPlan = planDemandPrice({ clearingUsd: clearingUsdByRarity[rar], lowestAskUsd: ra.external, fleetAskUsd: ra.fleet, askUndercutPct, jitterPct, minPriceUsd, rng });
-  if (rarPlan) return { priceUsd: rarPlan.priceUsd, source: rarPlan.source === 'clearing' ? 'rarity-clearing' : 'rarity-ask' };
+  const rarClearing = (Number(clearingCountByRarity[rar]) || 0) >= minSamples ? clearingUsdByRarity[rar] : null;
+  const rarPlan = planDemandPrice({ clearingUsd: rarClearing, lowestAskUsd: ra.external, fleetAskUsd: ra.fleet, askUndercutPct, jitterPct, minPriceUsd, rng });
+  if (rarPlan) return cap({ priceUsd: rarPlan.priceUsd, source: rarPlan.source === 'clearing' ? 'rarity-clearing' : 'rarity-ask' });
 
-  // 4) seed floor (live per-rarity floor from sales, else the manual rarity seed)
-  const floorUsd = creatureFloorUsdForRarity(rarity, floorZolanaByRarity, zolanaPriceUsd, variant);
-  if (floorUsd > 0) {
-    const org = planOrganicPrice({ floorUsd, jitterPct, minPriceUsd, rng });
-    if (org) return { priceUsd: org.priceUsd, source: 'seed' };
+  // 4) seed floor (live per-rarity floor from sales, else the manual rarity seed) — reuse rarityFloorUsd from above
+  if (rarityFloorUsd > 0) {
+    const org = planOrganicPrice({ floorUsd: rarityFloorUsd, jitterPct, minPriceUsd, rng });
+    if (org) return cap({ priceUsd: org.priceUsd, source: 'seed' });
   }
   return null;
 }
