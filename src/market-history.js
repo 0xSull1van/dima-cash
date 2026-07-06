@@ -35,15 +35,19 @@ function ensureDir(dir) {
 // goldFloorUsd (optional, 2026-07-06): the current external Gold→USD market rate, alongside the same
 // point — feeds estimateProfitUsd (ledger.js) for the blended "Profit today". Not a separate poll:
 // bot.js calls getGoldFloorUsd() in the SAME throttled block that already reads the floor by rarity.
-export function appendFloorSnapshot(account, floors, counts = {}, { logDir = DEFAULT_LOG_DIR, now = Date.now(), goldFloorUsd = null } = {}) {
+// clearing (optional, 2026-07-06): per-rarity MEDIAN sale price in ZOLANA — the stable "price it actually
+// sells at". The chart plots this, not the raw min-floor, because the min whipsaws 15× on a thin market.
+export function appendFloorSnapshot(account, floors, counts = {}, { logDir = DEFAULT_LOG_DIR, now = Date.now(), goldFloorUsd = null, clearing = null } = {}) {
   const hasFloors = floors && Object.keys(floors).length > 0;
   const hasGoldFloor = Number.isFinite(goldFloorUsd) && goldFloorUsd > 0;
+  const hasClearing = clearing && Object.keys(clearing).length > 0;
   // IMPORTANT: don't require hasFloors — a thin market often returns an EMPTY floors-by-rarity (no fresh
   // creature sales at any rarity this tick), but goldFloorUsd may have come separately and successfully;
   // previously this condition would drop a valid gold read just because floors happened to be empty.
-  if (!account || (!hasFloors && !hasGoldFloor)) return;
+  if (!account || (!hasFloors && !hasGoldFloor && !hasClearing)) return;
   ensureDir(logDir);
   const record = { ts: new Date(now).toISOString(), floors: hasFloors ? floors : {}, counts };
+  if (hasClearing) record.clearing = clearing;
   if (hasGoldFloor) record.goldFloorUsd = goldFloorUsd;
   appendFileSync(join(logDir, `floor-history-${account}.jsonl`), JSON.stringify(record) + '\n');
 }
@@ -83,10 +87,16 @@ export function readFloorHistory({ logDir = DEFAULT_LOG_DIR, sinceMs = 0 } = {})
       let e; try { e = JSON.parse(line); } catch { continue; }
       const t = Date.parse(e?.ts);
       if (!Number.isFinite(t) || t < sinceMs) continue;
-      for (const [rarity, floorZolana] of Object.entries(e.floors || {})) {
-        const z = Number(floorZolana);
-        if (!(z > 0)) continue;
-        out.push({ ts: t, rarity, floorZolana: z, saleCount: Number(e.counts?.[rarity]) || 0 });
+      // Emit a point per rarity that has EITHER a floor or a clearing reading this snapshot. clearingZolana
+      // (median) is the chart's preferred value; floorZolana (min) is the fallback for old snapshots.
+      const rarities = new Set([...Object.keys(e.floors || {}), ...Object.keys(e.clearing || {})]);
+      for (const rarity of rarities) {
+        const z = Number(e.floors?.[rarity]);
+        const c = Number(e.clearing?.[rarity]);
+        const floorZolana = z > 0 ? z : 0;
+        const clearingZolana = c > 0 ? c : 0;
+        if (!(floorZolana > 0) && !(clearingZolana > 0)) continue;
+        out.push({ ts: t, rarity, floorZolana, clearingZolana, saleCount: Number(e.counts?.[rarity]) || 0 });
       }
     }
   }

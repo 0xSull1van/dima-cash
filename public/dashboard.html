@@ -146,7 +146,7 @@ table.sales td.t{color:var(--muted)}
 
 <!-- 2. NFT floor · candles -->
 <section class="sec">
-  <h2>NFT floor · candles</h2>
+  <h2>NFT market price · candles <span style="color:var(--dim);font-weight:400;text-transform:none;letter-spacing:0">— median clearing price (stable), not the raw min-floor</span></h2>
   <div class="panel">
     <div class="controls" id="controls">
       <div class="seg" id="segRarity" role="tablist" aria-label="Rarity"></div>
@@ -292,17 +292,20 @@ function nearestPrice(prices, ts){
   return best.usdPrice>0 ? best.usdPrice : null;
 }
 
-// candles from raw points: a bucket exists only where there are valid points (floor>0);
-// empty intervals are skipped — no zero/flat candles
+// candles from raw points: a bucket exists only where there are valid points; empty intervals are
+// skipped — no zero/flat candles. VALUE = the median CLEARING price (the price sales actually happen at),
+// which is stable; we fall back to the min-floor only for old snapshots that predate clearing (the raw
+// min whipsaws 15× on a thin market and made the chart look broken).
+const pointPrice = r => (r.clearingZolana > 0 ? r.clearingZolana : r.floorZolana);
 function buildCandles(){
   const rows = (marketData?.floors || []).filter(f =>
-    f.rarity===ui.rarity && Number.isFinite(f.floorZolana) && f.floorZolana>0);
+    f.rarity===ui.rarity && pointPrice(f) > 0);
   const prices = marketData?.prices || [];
   const tfMs = ui.tf*60000;
   const buckets = new Map();
   const valid = []; // valid window points in order — for the delta
   for(const r of rows){
-    let v = r.floorZolana;
+    let v = pointPrice(r);
     if(ui.unit==='usd'){ const p=nearestPrice(prices, r.ts); if(p==null) continue; v=v*p; }
     valid.push({ ts:r.ts, v });
     const bt = Math.floor(r.ts/tfMs)*tfMs;
@@ -390,7 +393,11 @@ function renderKpis(s){
   const jup = s.jupiterPriceUsd||0;
   const sales = s.sales||{count:0,netZolana:0,netUsd:0,log:[]};
   setValUnit('kNetZ', fmtZ(sales.netZolana), 'ZOL');
-  $('kNetSub').textContent = `${fmtUsd(sales.netUsd)} · sales: ${sales.count}`;
+  // USD = ZOL received × the CURRENT rate, so it reconciles with the ZOL total and the ZOL PRICE tile
+  // (the old netUsd summed each sale's rate at sale time, so 2,557 ZOL didn't equal the shown $ at the
+  // current rate — looked like a bug). Fall back to the historical sum only if the live rate is missing.
+  const netUsd = jup>0 ? sales.netZolana*jup : (sales.netUsd||0);
+  $('kNetSub').textContent = `${fmtUsd(netUsd)} · sales: ${sales.count}`;
 
   const floors = mergedFloors(s.accounts||[]);
   let fleet=0;

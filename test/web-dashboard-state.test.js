@@ -26,11 +26,12 @@ test('web dashboard renders the four redesign sections with live data hooks', ()
   assert.match(html, /netZolana/);
 });
 
-test('web dashboard candles skip empty buckets and treat floor<=0 as no-data', () => {
+test('web dashboard candles skip empty buckets and plot the median clearing price', () => {
   const html = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 
-  // visual-bug fix: floor=0 isn't drawn as "the price fell to 0", empty intervals aren't bucketed
-  assert.match(html, /f\.floorZolana\s*>\s*0/);
+  // the chart plots the stable median clearing price, falling back to the min-floor for old snapshots
+  assert.match(html, /clearingZolana\s*>\s*0\s*\?\s*r\.clearingZolana\s*:\s*r\.floorZolana/);
+  assert.match(html, /pointPrice\(f\)\s*>\s*0/); // empty/zero points excluded — no flat/zero candles
   // USD conversion — via the nearest-in-time jupiter rate from prices
   assert.match(html, /nearestPrice/);
 });

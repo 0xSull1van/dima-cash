@@ -660,12 +660,19 @@ export class ZenkoBot {
     // Creature market floor by rarity in $ZOLANA (for the dashboard) — throttled ~10 min, read-only.
     if (Date.now() >= this.nextFloorAt) {
       this.nextFloorAt = Date.now() + 10 * 60 * 1000;
-      let floorsForSnapshot = null, countsForSnapshot = {};
+      let floorsForSnapshot = null, countsForSnapshot = {}, clearingForSnapshot = null;
       try {
         if (!this.priceUsd) { try { this.priceUsd = (await this.c.api('/api/price')).zolanaPriceUsd; } catch {} }
         const { floors, counts, clearingUsd, metricsBySpecies, velocity } = await getCreatureFloorAndVolumeByRarity(this.c, { zolanaPriceUsd: this.priceUsd, fleetWallets: this.cfg.fleetWallets });
         // clearing (median of real sales, USD) — merge over last-known-good, like floors below
         if (clearingUsd && Object.keys(clearingUsd).length) this.creatureClearingUsd = { ...(this.creatureClearingUsd || {}), ...clearingUsd };
+        // Also snapshot the clearing (median) price per rarity in ZOLANA — the chart plots THIS, not the
+        // raw min-floor: the min whipsaws 15× on a thin market (found live: common min 40 / median 501 /
+        // max 7625), the median is the stable "price it actually sells at". Same USD→ZOLANA conversion as floors.
+        if (clearingUsd && Object.keys(clearingUsd).length && this.priceUsd > 0) {
+          clearingForSnapshot = {};
+          for (const [r, usd] of Object.entries(clearingUsd)) if (usd > 0) clearingForSnapshot[r] = usd / this.priceUsd;
+        }
         // per-species metrics (floor/clearing/count) — merge over last-known-good too: the thin market
         // rarely has a sale of every species per window, so replacing wholesale would drop a species'
         // ideal price to nothing the moment it had no sale this poll (same reasoning as floors below).
@@ -688,7 +695,7 @@ export class ZenkoBot {
       try { goldFloorUsd = await getGoldFloorUsd(this.c, { fleetWallets: this.cfg.fleetWallets }); } catch { /* no gold listings right now — not critical */ }
       // Persist to disk for the candle chart and "Profit today" (market-history.js) — previously
       // creatureFloorZolana lived ONLY in process memory and was lost on every restart (including --watch).
-      appendFloorSnapshot(this.name, floorsForSnapshot, countsForSnapshot, { goldFloorUsd });
+      appendFloorSnapshot(this.name, floorsForSnapshot, countsForSnapshot, { goldFloorUsd, clearing: clearingForSnapshot });
     }
 
     // AFK zone: ×2 stamina regen (turn on once if not already active)
@@ -1814,7 +1821,17 @@ export class ZenkoBot {
     // from last tick". graduate/swap do NOT carry freedSlot=true (no net gain of free slots: graduate returns
     // a pet to active, swap trades 1-for-1), only intake actually hides a pet in the vault exactly like handleVault.
     if (this.cfg.autoBreedingPipeline && !this.inMaintenance()) {
-      await this.handleVaultGraduate(workingState);
+      // Graduate (vault→active, to sell an exhausted 8/8 breeder) and intake (active→vault, to breed a
+      // fresh one) CANCEL OUT on a full roster: net-zero movement, so no active slot frees and ready eggs
+      // can't hatch. Found live 2026-07-06 (owner: "incubation isn't claiming, pets aren't being added"):
+      // main/Nova/Ember pinned at active 50 / vault 30 with 6 ready eggs and 0 hatches. When the roster is
+      // full AND eggs are waiting, SKIP graduate so intake actually NET-frees active slots for hatching —
+      // new pets take priority; the exhausted breeders wait in the vault (useless for breeding anyway) and
+      // graduate resumes once hatching/selling makes room.
+      const rosterFull = (workingState.creatures || []).length >= (Number(this.cfg.vaultRosterFull) || 49);
+      const readyEggs = (workingState.eggs || []).some(e => e.status === 'ready'
+        || (e.status === 'incubating' && e.hatch_ready_at && parseTime(e.hatch_ready_at) <= now));
+      if (!(rosterFull && readyEggs)) await this.handleVaultGraduate(workingState);
       const intaken = await this.handleVaultIntake(workingState);
       if (intaken) {
         freedSlot = true;

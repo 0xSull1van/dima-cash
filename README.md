@@ -204,6 +204,62 @@ default is harmless then, and it starts funding short accounts automatically onc
 
 ---
 
+## Managing your wallets & money
+
+Every account has its own Solana wallet. Each private key is AES-encrypted on disk
+(`wallets/<name>.enc.json`) and can only be decrypted with your **master key**.
+
+### The master key (read this first)
+
+The master key encrypts every wallet. **Without it you cannot open any wallet or reach its funds —
+there is no recovery.**
+
+- It is created **once**, the first time you run `npm run gen-wallet` or `npm run create-accounts`
+  *without* `ZENKO_MASTER_KEY` set. The script generates a random key and **prints it a single time** —
+  copy it into a password manager immediately.
+- Provide it before any wallet command, via the environment:
+  ```bash
+  export ZENKO_MASTER_KEY="your-master-key"      # macOS / Linux
+  $env:ZENKO_MASTER_KEY="your-master-key"        # Windows PowerShell
+  ```
+- It is **never** written to disk in plaintext and is git-ignored. Keep it only in your password manager.
+
+### See your wallet addresses
+```bash
+npm run accounts        # lists every account: name, public address, proxy, status
+```
+Public addresses are safe to share — that's where you deposit SOL. Paste one into a Solana explorer
+(e.g. solscan.io) to check its on-chain balance.
+
+### Export a private key (e.g. to import a wallet into Phantom)
+Needs `ZENKO_MASTER_KEY` set.
+```bash
+node scripts/decrypt-wallet.js <AccountName> --reveal   # prints ONE wallet's secret key (base58 + JSON array)
+npm run accounts -- --private-keys                       # prints EVERY wallet's private key (base58)
+```
+The base58 secret key imports directly into Phantom/Solflare (“Add / connect wallet → Import private key”).
+**Anyone with this key controls the wallet and its funds — never share it or paste it anywhere untrusted.**
+
+### Withdraw your $ZOLANA
+`sweep-funds.js` consolidates the farmed $ZOLANA from every account into one destination wallet. It
+leaves each account's **SOL untouched** (accounts keep SOL to pay their own transaction fees), and a
+sponsor wallet covers the network fees.
+```bash
+node scripts/sweep-funds.js                              # DRY RUN — prints the plan, sends nothing
+node scripts/sweep-funds.js --live                       # actually broadcast the transfers
+node scripts/sweep-funds.js --live --token-floor=6500    # leave 6,500 $ZOLANA per account, sweep the rest
+```
+- **Set your own destination first:** edit `DESTINATION` at the top of `scripts/sweep-funds.js` to a
+  wallet you control before the first live sweep.
+- Needs `ZENKO_MASTER_KEY`. **Always dry-run and read the plan before `--live`.**
+- To withdraw **SOL**, or to move a single wallet's funds, export that wallet's private key (above),
+  import it into Phantom, and send manually.
+
+> ⚠️ **This is real on-chain money and real private keys.** Double-check the destination, dry-run first,
+> and verify the transaction paths in `scripts/sweep-funds.js` yourself before broadcasting.
+
+---
+
 ## Configuration
 
 Runtime secrets come from `.env` (see `.env.example`); the wallet-encryption master key comes from the

@@ -81,8 +81,12 @@ export function farmTradingConfig(overrides = {}) {
     // top accounts, all valves powerless (commons ran out, uncommons protected until 8/8, the Rare+ valve
     // doesn't see them) → hatch squad-full → ready eggs hold the incubator for HOURS → breeding stalls too.
     // A pool of 40 + batch intake unload the roster into the vault, hatch frees up, the incubator turns.
-    vaultBreedingPoolTarget: 40,
-    vaultIntakeMaxPerTick: 5,               // batch intake: one per 10-20 min would unload 40 slots in ~10 hours
+    // 2026-07-06: raised 40→60. With the graduate-vs-intake cancellation fixed (see handleDungeons), intake
+    // net-frees active slots for hatching until the vault reaches this target; a higher target = more
+    // hatching headroom before an account saturates (roster + vault full). The server allows ≥36 (seen
+    // live); intake caps gracefully (409 → silent break) at whatever the real storage limit is.
+    vaultBreedingPoolTarget: 60,
+    vaultIntakeMaxPerTick: 5,               // batch intake: one per 10-20 min would unload the roster into the vault over hours
     vaultIntakeCooldownMinMs: 3 * 60 * 1000,
     vaultIntakeCooldownMaxMs: 8 * 60 * 1000,
     junkMinBreedCount: 8,                 // the exhausted 8/8 always sell
