@@ -55,7 +55,7 @@ test('farmTradingConfig enables seller-side trading while keeping human cadence'
   assert.equal(cfg.junkCreatureKeepPerSpecies, 0); // продаём всех, не держим
   assert.equal(cfg.autoBuyEggs, false); // 2026-07-06 (owner, ФИНАЛ): «надо фулл убрать, чтоб яйца не покупало» — выключено полностью, включая lux; рост только через брид
   assert.equal(cfg.eggQueueTarget, 6);
-  assert.equal(cfg.vaultBreedingPoolTarget, 60); // vault nursery: raised 40→60 for more hatching headroom (graduate-vs-intake cancellation fixed)
+  assert.equal(cfg.vaultBreedingPoolTarget, 500); // vault nursery raised to the max (owner) — server storage caps it; runner core protected in pickBreedingIntake
   assert.equal(cfg.vaultIntakeMaxPerTick, 5);    // батч-впуск (по одному в 10-20 мин — ~10 часов на разгрузку)
   assert.equal(cfg.autoEnhanceRelics, true); // 2026-07-06 (друг): качаем trainer-реликвии «сразу на два уровня»
   assert.deepEqual(cfg.enhanceRelicClasses, ['trainer']); // ТОЛЬКО trainer (их 3/акк) — пет-реликвий 200+, качать всех разорительно

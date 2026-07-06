@@ -432,6 +432,25 @@ test('intake: epic с same-species парой приоритетнее один�
   assert.equal(String(got?.creature_id), 'thornmaw', 'парный epic первым в ясли');
 });
 
+// 2026-07-06 (owner "увеличиваем vault до максимального"): with a huge vaultBreedingPoolTarget intake would
+// otherwise drain EVERY rare/epic into the vault (it sorts rarity DESC) and gut the dungeon runners. Reserve
+// the top-N Rare+ as runners — the same core the pressure valve keeps — and vault only the surplus.
+test('intake: reserves the top-N Rare+ as dungeon runners (vaultKeepStrongestRareplus), vaults the surplus', () => {
+  const roster = [
+    { id: 'ep1', creature_id: 'thornmaw', rarity: 'Epic', stage: 'Adult', level: 30, breed_count: 0 }, // strongest → runner
+    { id: 'ep2', creature_id: 'thornmaw', rarity: 'Epic', stage: 'Baby', level: 1, breed_count: 0 },   // weaker epic → surplus
+    { id: 'u1', creature_id: 'brambark', rarity: 'Uncommon', stage: 'Baby', breed_count: 0 },
+  ];
+  const cfg = { vaultBreedingRarities: ['uncommon', 'rare', 'epic'], vaultKeepStrongestRareplus: 1 };
+  const got = pickBreedingIntake(roster, cfg, {});
+  assert.notEqual(got?.id, 'ep1', 'the strongest Epic stays an active runner, not vaulted');
+  assert.ok(['ep2', 'u1'].includes(got?.id), 'a surplus Rare+ / uncommon is vaulted instead');
+
+  // with the reserve OFF (default 0) the strongest epic IS the top intake pick (old behavior preserved)
+  const off = pickBreedingIntake(roster, { vaultBreedingRarities: ['uncommon', 'rare', 'epic'] }, {});
+  assert.equal(off?.creature_id, 'thornmaw', 'no reserve → epic pair still first');
+});
+
 test('vaultSwap: не выдёргивает из сейфа живой брид-сток (breed_count<8)', () => {
   const strongStored = { id: 's1', rarity: 'Epic', stage: 'Adult', level: 9, breed_count: 2, stored: true };
   const weakActive = { id: 'a1', rarity: 'Rare', stage: 'Baby', level: 1, breed_count: 0 };

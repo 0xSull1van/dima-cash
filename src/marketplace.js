@@ -903,9 +903,21 @@ export function planVaultSwap(creatures = [], cfg = {}, { busyIds, protectId } =
 export function pickBreedingIntake(creatures = [], cfg = {}, { busyIds } = {}) {
   const busy = busyIds instanceof Set ? busyIds : new Set(busyIds || []);
   const rarities = new Set((cfg.vaultBreedingRarities || ['uncommon', 'rare']).map(lower));
-  // SEPARATE from vaultKeepStrongestRareplus (that's about Rare+ dungeon runners; here the pool is already
-  // narrowed to Uncommon/Rare for breeding, where a "top-6" would eat the whole small pool and intake would never fire).
+  // keepStrongest reserves the top-N of the whole breeding pool (mostly Uncommon) — a "least valuable first" tail guard.
   const keepStrongest = Math.max(0, Number(cfg.vaultBreedingKeepStrongest ?? 0));
+  // KEEP THE DUNGEON CORE: reserve the top-N Rare+ as active runners — the SAME core the pressure valve
+  // protects (vaultKeepStrongestRareplus). Intake otherwise vaults rare/epic FIRST (the epic-ladder sort
+  // below), so with a large vaultBreedingPoolTarget (raised to the max 2026-07-06) it would drain every
+  // Rare+ into the vault and crater dungeon depth/gold — starving the very breeding it feeds. The SURPLUS
+  // rare/epic (beyond the top-N) + all uncommons still reach the nursery, so the ladder keeps climbing.
+  const keepRarePlus = Math.max(0, Number(cfg.vaultKeepStrongestRareplus ?? 0));
+  const runnerCore = new Set();
+  if (keepRarePlus > 0) {
+    const rp = (creatures || []).filter(c => KEEP_RARITIES.has(lower(c?.rarity)) && c?.stored !== true
+      && !busy.has(c?.id) && !isInRun(c) && !isFavoriteCreature(c) && !isListed(c));
+    rp.sort((a, b) => rareplusValue(b) - rareplusValue(a));
+    for (const c of rp.slice(0, keepRarePlus)) runnerCore.add(c.id);
+  }
   const pool = [];
   for (const c of creatures || []) {
     // lux species enter the nursery at ANY rarity (including Common — glimra/lumen are breeding stock for
@@ -914,6 +926,7 @@ export function pickBreedingIntake(creatures = [], cfg = {}, { busyIds } = {}) {
     if (!lux && !rarities.has(lower(c?.rarity))) continue;
     if (c?.stored === true) continue;                                    // already in the vault
     if ((Number(c?.breed_count) || 0) >= 8) continue;                    // exhausted — not here, but to sale
+    if (runnerCore.has(c?.id)) continue;                                 // a protected top Rare+ dungeon runner
     // 2026-07-06: the Adult+ and !isBound gates are REMOVED (owner: "breed everyone, from vault and fleet").
     // The vault is a nursery: feeding/evolution walk allCreatures, a Baby matures IN the vault without
     // taking a roster slot (a 50/50 roster choked hatch while youngsters matured outside — ready eggs held
