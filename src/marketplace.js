@@ -1,4 +1,5 @@
 import { isLuxCreature } from './breeding.js'; // lux shield for recycle + nursery priority ("make sure the pets are Lux")
+import { discordMedianFor } from './discord-sales.js'; // real-market medians from the project Discord (2026-07-07)
 
 // Marketplace client for Zenko (play.zolana.gg) — SELLER-side + read-only.
 // Money-safety: this module can ONLY read and list/cancel. It never calls the buyer
@@ -455,6 +456,7 @@ export function creatureIdealPriceUsd({
   clearingUsdByRarity = {}, asksByRarity = {},
   clearingCountByRarity = {}, // # of external normal sales behind each rarity median — for the thin-data guard
   variantFloorUsd = {},       // `${rarity}:${variant}` → live per-trait floor from real special-variant sales
+  discordMedianUsd = {}, discordCounts = {}, // per-trait MEDIAN from the project Discord (real whole-market sales)
   floorZolanaByRarity = {}, zolanaPriceUsd = null,
   cfg = {}, rng = Math.random,
 } = {}) {
@@ -474,6 +476,17 @@ export function creatureIdealPriceUsd({
   const cap = (out) => (out && rarityFloorUsd > 0)
     ? { ...out, priceUsd: Math.min(out.priceUsd, rarityFloorUsd * maxOverFloor) }
     : out;
+
+  // 0) REAL MARKET (Discord) — the truest signal (owner 2026-07-07: "среднюю цену −5-7% от рыночной,
+  //    учитывать все трейты/рарность/rainbow"). The project channel posts every sale; discordMedianUsd holds
+  //    per-trait medians (species+variant → variant → rarity). List at median × (1 − cashoutDiscordDiscountPct).
+  //    NOT capped — it's a robust median of the whole market, not our thin data (which underpriced Rares to $0.04).
+  const dm = discordMedianFor({ rarity, variant, species }, discordMedianUsd, { counts: discordCounts, minCount: Math.max(1, Number(cfg.cashoutDiscordMinSamples) || 1) });
+  if (dm && dm.usd > 0) {
+    const discount = Math.min(0.5, Math.max(0, Number(cfg.cashoutDiscordDiscountPct) || 0));
+    const org = planOrganicPrice({ floorUsd: dm.usd * (1 - discount), jitterPct, minPriceUsd, rng });
+    if (org) return { priceUsd: org.priceUsd, source: `discord:${dm.key}` };
+  }
 
   // 1) SPECIAL VARIANT (Golden/Shadow/Rainbow/Shiny) → priced on ITS OWN trait floor, slightly elevated
   //    (owner 2026-07-07: "каждый трейт смотрится отдельно, флор по какому последнему брали, по чуть

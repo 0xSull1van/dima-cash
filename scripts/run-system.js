@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 
 export function parseSystemArgs(argv = []) {
   const opts = {
@@ -128,6 +129,12 @@ export function buildSystemProcesses(opts = parseSystemArgs()) {
       command: process.execPath,
       args: ['scripts/rebalance-zolana.js', '--execute', `--watch-min=${opts.rebalanceMin}`],
     });
+  }
+  // Discord floor tracker (2026-07-07): only if a token is configured (it self-loads .env). Writes real-market
+  // medians to logs/discord-floor.json → pricing. NOT under --watch (long-lived poller). Skipped silently if no token.
+  const hasDiscordToken = !!process.env.DISCORD_TOKEN || (existsSync('.env') && /^\s*DISCORD_TOKEN\s*=\s*\S/m.test(readFileSync('.env', 'utf8')));
+  if (opts.discordFloor !== false && hasDiscordToken) {
+    processes.push({ name: 'discord-floor', command: process.execPath, args: ['scripts/discord-floor-tracker.js'] });
   }
   return processes;
 }

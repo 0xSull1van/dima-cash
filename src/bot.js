@@ -235,6 +235,10 @@ export class ZenkoBot {
       // (clearing) → a bit below the min external ask → seed; don't undercut our own fleet ask (a ladder).
       cashoutDemandPricing: false,
       cashoutSpeciesMinSamples: 2,     // trust a species' median (clearing) only with ≥ this many real sales; fewer → fall back to its floor, then rarity
+      useDiscordFloor: false,          // read logs/discord-floor.json (real-market medians) — the farm turns it on; off = in-game floor only
+      cashoutDiscordDiscountPct: 0.06, // list at Discord median × (1 − this) — "средняя цена −5-7% от рыночной"
+      cashoutDiscordMinSamples: 2,     // trust a Discord per-trait median only with ≥ this many sales behind it (falls back to a broader trait key)
+      discordFloorMaxAgeMs: 15 * 60 * 1000, // ignore logs/discord-floor.json older than this (tracker down → in-game floor)
       cashoutAskUndercutPct: 0.05,     // no sales in the window: our ask = external min × (1−this)
       cashoutRepriceDecayPct: 0,       // >0: a stale lot cheapens in steps ×(1−decay) from the CURRENT price
       // Adaptive listing pace from the market pulse (see planListingPace / salesVelocityPerHour)
@@ -696,6 +700,18 @@ export class ZenkoBot {
           countsForSnapshot = counts;
         }
       } catch (e) { /* recent-sales unavailable — keep the previous values */ }
+      // Discord real-market medians (2026-07-07): scripts/discord-floor-tracker.js writes logs/discord-floor.json
+      // every ~30s from the project channel's sale posts — the whole market, not our thin in-game window.
+      // creatureIdealPriceUsd step 0 lists at this median − discount. Graceful: off/absent/STALE → in-game floor.
+      if (this.cfg.useDiscordFloor) {
+        const maxAge = Number(this.cfg.discordFloorMaxAgeMs) || 15 * 60 * 1000;
+        try {
+          const raw = JSON.parse(readFileSync('logs/discord-floor.json', 'utf8'));
+          if (raw.medianUsd && (Date.now() - Date.parse(raw.updatedAt || 0)) < maxAge) {
+            this.discordMedian = raw.medianUsd; this.discordCounts = raw.counts || {};
+          } else { this.discordMedian = null; } // stale (tracker down) → stop trusting it
+        } catch { this.discordMedian = this.discordMedian || null; } // no file yet → in-game floor
+      }
       // 2026-07-06: the external Gold→USD market rate — for "Profit today" (estimateProfitUsd) we need
       // something to convert gross Gold into, and Gold has no direct rate anywhere but market listings.
       // A separate try — a failure here shouldn't cost us the floors already read successfully above.
@@ -1439,6 +1455,8 @@ export class ZenkoBot {
         clearingUsdByRarity: this.creatureClearingUsd || {},
         clearingCountByRarity: this.creatureSalesCount || {}, // thin-data guard: don't trust a 1-sale median
         variantFloorUsd: this.creatureVariantFloor || {},     // per-trait floor → special variants priced on their own trait
+        discordMedianUsd: this.discordMedian || {},           // real-market medians (Discord) → step-0 pricing at median − discount
+        discordCounts: this.discordCounts || {},
         asksByRarity: creatureAsksByRarity(listingRows, mkOpts),
         floorZolanaByRarity: this.creatureFloorZolana || {},
         zolanaPriceUsd: this.priceUsd,

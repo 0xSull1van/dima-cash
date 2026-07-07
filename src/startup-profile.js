@@ -120,6 +120,8 @@ export function farmTradingConfig(overrides = {}) {
     // rarity then seed — see creatureIdealPriceUsd. Trust a species' median only with ≥2 real sales;
     // below that the market is too thin for that species and we use its floor, then the rarity signal.
     cashoutSpeciesMinSamples: 2,
+    useDiscordFloor: true,         // 2026-07-07: price off REAL market medians (Discord tracker, logs/discord-floor.json) — fixes the Rare underpricing ($0.04 vs real $0.10). Graceful fallback to in-game floor if the tracker is down.
+    cashoutDiscordDiscountPct: 0.06, // list at Discord median −6% ("средняя цена −5-7% от рыночной")
     cashoutMaxPriceOverFloor: 10,  // 2026-07-06 ("почему так дорого листим"): a thin/outlier clearing median
     // priced an Uncommon at $1.67 on a $0.05 floor (+3240%). Sanity cap = floor × this; a real median runs a
     // few× the min-floor on a thin market, so 10× is generous but blocks a polluted price from listing us out.

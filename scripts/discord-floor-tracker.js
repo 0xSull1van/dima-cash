@@ -20,10 +20,18 @@
 //   DISCORD_WINDOW_H         how many hours of sales to keep for the floor (default 24)
 //   ZOLANA_PRICE_USD         optional: also emit floors in $ZOLANA (else USD only)
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { parseSaleMessage } from '../src/discord-sales.js';
+import { parseSaleMessage, discordTraitMedians } from '../src/discord-sales.js';
+
+// Minimal .env loader so the tracker runs standalone (`node scripts/discord-floor-tracker.js`) — DISCORD_TOKEN
+// etc. live in .env (gitignored). Doesn't overwrite anything already in the environment.
+if (existsSync('.env')) for (const line of readFileSync('.env', 'utf8').split('\n')) {
+  const l = line.trim(); if (!l || l.startsWith('#') || !l.includes('=')) continue;
+  const i = l.indexOf('='); const k = l.slice(0, i).trim();
+  if (process.env[k] === undefined) process.env[k] = l.slice(i + 1).trim().replace(/^["']|["']$/g, '');
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = join(ROOT, 'logs', 'discord-floor.json');
@@ -78,35 +86,13 @@ function ingest(messages) {
   return added;
 }
 
-function computeFloor() {
-  const cutoff = Date.now() - WINDOW_MS;
-  while (sales.length && sales[0].ts < cutoff) sales.shift(); // window is roughly time-ordered (Discord returns newest-first, we unshift-sort below)
-  const recent = sales.filter((s) => s.ts >= cutoff);
-  const byRarity = {}; // rarity -> {min prices}
-  const byVariant = {}; // `rarity:variant` -> [prices]
-  const push = (map, key, price) => { (map[key] = map[key] || []).push(price); };
-  for (const s of recent) {
-    const r = String(s.rarity || '').toLowerCase();
-    const v = String(s.variant || 'normal').toLowerCase();
-    if (!r) continue;
-    if (v === 'normal' || v === '') push(byRarity, r, s.priceUsd);
-    else push(byVariant, `${r}:${v}`, s.priceUsd);
-  }
-  const floorUsd = (arr) => Math.min(...arr);
-  const median = (arr) => { const a = [...arr].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
-  const out = { rarityFloorUsd: {}, rarityClearingUsd: {}, variantFloorUsd: {}, counts: {} };
-  for (const [r, arr] of Object.entries(byRarity)) { out.rarityFloorUsd[r] = floorUsd(arr); out.rarityClearingUsd[r] = median(arr); out.counts[r] = arr.length; }
-  for (const [k, arr] of Object.entries(byVariant)) { out.variantFloorUsd[k] = floorUsd(arr); out.counts[k] = arr.length; }
-  if (ZOL_USD > 0) {
-    out.rarityFloorZolana = Object.fromEntries(Object.entries(out.rarityFloorUsd).map(([r, u]) => [r, Math.round(u / ZOL_USD)]));
-  }
-  return out;
-}
-
 function writeFloor() {
-  const floor = computeFloor();
+  const cutoff = Date.now() - WINDOW_MS;
+  while (sales.length && sales[0].ts < cutoff) sales.shift();
+  const recent = sales.filter((s) => s.ts >= cutoff);
+  const { medianUsd, counts } = discordTraitMedians(recent); // per-trait median (rarity / rarity:variant / rarity:variant:species)
   mkdirSync(dirname(OUT), { recursive: true });
-  writeFileSync(OUT, JSON.stringify({ updatedAt: new Date().toISOString(), source: 'discord', channel: CHANNEL, salesWindow: sales.length, ...floor }, null, 2));
+  writeFileSync(OUT, JSON.stringify({ updatedAt: new Date().toISOString(), source: 'discord', channel: CHANNEL, salesWindow: recent.length, medianUsd, counts }, null, 2));
 }
 
 async function loop() {

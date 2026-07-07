@@ -29,7 +29,8 @@ test('buildSystemProcesses starts dashboard + autopilot + rebalance under --watc
   const processes = buildSystemProcesses(parseSystemArgs(['--all', '--execute']));
 
   // 2026-07-06: the rebalancer is on by default now (owner request) — see the rebalance test above.
-  assert.deepEqual(processes.map((p) => p.name), ['dashboard', 'autopilot', 'rebalance']);
+  // discord-floor is token-gated (ambient .env) and orthogonal to the process-args logic here — filter it out.
+  assert.deepEqual(processes.map((p) => p.name).filter((n) => n !== 'discord-floor'), ['dashboard', 'autopilot', 'rebalance']);
   assert.equal(processes[0].command, process.execPath);
   // dashboard also runs under --watch — it grew real server logic (Jupiter price poller for
   // market-history.js), not just static-file serving (dashboard.html is served fresh per-request).
@@ -42,8 +43,17 @@ test('buildSystemProcesses starts dashboard + autopilot + rebalance under --watc
 test('buildSystemProcesses can run a players-only bot without dashboard (rebalance still on)', () => {
   const processes = buildSystemProcesses(parseSystemArgs(['--bot', '--players', '--no-dashboard']));
 
-  assert.deepEqual(processes.map((p) => p.name), ['bot', 'rebalance']);
+  assert.deepEqual(processes.map((p) => p.name).filter((n) => n !== 'discord-floor'), ['bot', 'rebalance']);
   assert.deepEqual(processes.find((p) => p.name === 'bot').args, ['--watch', 'scripts/run-bot.js', '--players']);
+});
+
+test('buildSystemProcesses adds the discord-floor tracker when DISCORD_TOKEN is configured', () => {
+  const prev = process.env.DISCORD_TOKEN;
+  process.env.DISCORD_TOKEN = 'x';
+  try {
+    const names = buildSystemProcesses(parseSystemArgs(['--all', '--execute'])).map((p) => p.name);
+    assert.ok(names.includes('discord-floor'), 'the tracker runs alongside the fleet when a token is set');
+  } finally { if (prev === undefined) delete process.env.DISCORD_TOKEN; else process.env.DISCORD_TOKEN = prev; }
 });
 
 test('--no-watch opts the farm process out of auto-restart', () => {

@@ -180,6 +180,35 @@ test('ideal price: special variant with no live trait floor → manual override,
   assert.equal(noSignal.priceUsd, 0.03);
 });
 
+// 2026-07-07 (owner: "среднюю цену −5-7% от рыночной, учитывать все трейты"): Discord real-market median wins.
+test('ideal price: Discord median − discount is the PRIMARY signal (step 0), uncapped', () => {
+  const r = creatureIdealPriceUsd({
+    cfg: { ...CFG, cashoutDiscordDiscountPct: 0.06, cashoutDiscordMinSamples: 1 }, rng: () => 0.5,
+    species: 'stormray', rarity: 'rare', variant: 'normal',
+    discordMedianUsd: { rare: 0.10 }, discordCounts: { rare: 13 },
+    clearingUsdByRarity: { rare: 0.02 }, clearingCountByRarity: { rare: 9 }, // in-game thin data is cheaper — ignored
+    floorZolanaByRarity: { rare: 100 }, zolanaPriceUsd: 0.0002,              // rarity floor $0.02 → cap $0.20, but Discord isn't capped
+  });
+  assert.equal(r.source, 'discord:rare');
+  assert.equal(r.priceUsd, 0.09, 'median 0.10 × (1 − 0.06) = 0.094 → floor-to-cent 0.09 (was $0.04 before)');
+});
+
+test('ideal price: Discord picks the most specific trait (species:variant), min-samples respected', () => {
+  const md = { 'epic:golden': 0.40, 'epic:golden:cyclonix': 0.42 };
+  const cnt = { 'epic:golden': 3, 'epic:golden:cyclonix': 2 };
+  const specific = creatureIdealPriceUsd({ cfg: { ...CFG, cashoutDiscordDiscountPct: 0, cashoutDiscordMinSamples: 1 }, rng: () => 0.5, species: 'cyclonix', rarity: 'epic', variant: 'golden', discordMedianUsd: md, discordCounts: cnt });
+  assert.equal(specific.source, 'discord:epic:golden:cyclonix');
+  assert.equal(specific.priceUsd, 0.42);
+  // require ≥3 samples → the species key (n=2) is skipped, falls to the variant key (n=3)
+  const broader = creatureIdealPriceUsd({ cfg: { ...CFG, cashoutDiscordDiscountPct: 0, cashoutDiscordMinSamples: 3 }, rng: () => 0.5, species: 'cyclonix', rarity: 'epic', variant: 'golden', discordMedianUsd: md, discordCounts: cnt });
+  assert.equal(broader.source, 'discord:epic:golden');
+});
+
+test('ideal price: no Discord data → falls through to the existing in-game logic', () => {
+  const r = price({ species: 'x', rarity: 'uncommon', variant: 'normal', discordMedianUsd: {}, floorZolanaByRarity: {}, zolanaPriceUsd: null });
+  assert.equal(r.source, 'seed', 'empty Discord → seed as before');
+});
+
 test('ideal price: never undercuts our own fleet ask (ladder against self-dump)', () => {
   const r = price({
     species: 'smoldra', rarity: 'uncommon', variant: 'normal',
