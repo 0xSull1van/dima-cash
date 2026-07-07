@@ -152,6 +152,7 @@ export class ZenkoBot {
       breedMinHappiness: 50,   // happiness gate for breeding
       breedMinRarity: 'common', // lower bound on breeding; the farm profile sets 'uncommon' (Common → XP fodder, don't breed)
       breedMaxRarity: 'epic',  // don't breed Legendary/Mythical (≈T4 end of the ladder / capped → server rejects)
+      breedHighRarityFirst: false, // default bottom-up (friend's original); the farm profile flips it on to climb epics/legs
       breedAllowStored: true,  // vaulted (safe) pets CAN breed (2026-07-05) — zero opportunity cost, they don't run dungeons anyway. false → disable if the server ever rejects/something breaks
       breedAllowCrossSpecies: false, // 2026-07-06 (friend: "one species, one rarity, one tier, for both — if they differ it's −1 level"): by default do NOT breed different species of the same rarity, even if there's no same-species duplicate (a mismatch is tolerated by the server but gives a knowingly worse result). true → enable the cross-species fallback for volume at the cost of quality
       breedGoldReserve: null,  // Gold reserve for breeding (null → use minGoldReserve). The farm profile protects the egg budget

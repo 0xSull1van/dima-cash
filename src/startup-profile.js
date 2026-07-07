@@ -38,7 +38,8 @@ export function farmTradingConfig(overrides = {}) {
     feedMaxPerTick: 10,                  // 2026-07-06: breeding stock of Babies matures via feeds (Baby→Juv 5 feeds, Juv→Adult 13, cooldown 11m/pet); after an egg burst accounts have 30+ Babies — the default cap of 3 choked the conveyor (~2.2 feeds/min when ~3.3 was needed), 10 per tick covers 36+ youngsters
     autoBreed: true,                     // tier-climb breeder (planBreedPair): same-species Adult+ pairs with gates (breed_count<8, cooldown 25m, happiness≥50, rarity≤epic) → climb the tier. Bound offspring is now recycled into XP (the funnel fix).
     breedGoldReserve: 5000,              // Gold reserve for breeding: a bit above minGoldReserve so we don't drain to zero. The egg↔breed KNOB: higher → prioritize 50k eggs, lower → prioritize breeding (cheaper per rarity). Eggs are queue-capped (4), so breeding can lead.
-    breedMinRarity: 'uncommon',          // friend's strategy: start at Uncommon (Common → XP fodder, don't breed). Order bottom-up: uncommon→rare→epic.
+    breedMinRarity: 'uncommon',          // friend's strategy: start at Uncommon (Common → XP fodder, don't breed).
+    breedHighRarityFirst: true,          // 2026-07-07 (owner: эпики/леги растут медленно): breed SCARCE rare/epic pairs first, Uncommons fill the rest — 24h was 604/92/0 (unc/rare/epic) breeds, so epic pairs never climbed. Multi-breed loop + cooldowns keep the base breeding too.
     breedAllowCrossSpecies: false,       // 2026-07-06 (friend): "one species, one rarity, one tier, for both" — strictly same-species, not just same-rarity. Matches the base default, fixed here as a deliberate decision.
     // Evolution caps at Adult except Legendary/Mythical (2026-07-06, friend: "don't push uncommon/rare/epic to
     // Elder — Elder just wastes Gold; only leggies are worth leveling to Elder; the rest stay Adult and breed
@@ -169,10 +170,11 @@ export function farmTradingConfig(overrides = {}) {
     // up its breeds", NOT "useless in dungeons" — a strong Epic fighter stays valuable for party_power/depth
     // even after exhausting its breed attempts, unlike Uncommon/Rare where that's less critical. While the
     // goal is to grow the Epic population, selling would cut exactly what we want to grow. Revisit once enough stock accumulates.
-    // 2026-07-06 (owner): sell ONLY Uncommon. Rare removed — with the shift to "accumulate a full fleet of
-    // epics" every rare = raw material for the epic ladder (rare+rare → an epic egg); even an exhausted 8/8
-    // rare stays a dungeon fighter (party_power). Bring rare back once epics are plentiful.
-    junkCreatureRarities: ['uncommon'],
+    // 2026-07-07 (owner: "что ещё можем продать" — 188 unbound rares sitting idle): sell Uncommon AND Rare,
+    // but ONLY the surplus. junkSurplusKeepPerSpecies keeps the STRONGEST 4/species (= 2 breeding pairs, best
+    // dungeon fighters) so the epic ladder + party_power are preserved; the weakest excess + exhausted 8/8
+    // rares are cashed out. Pairs with breedHighRarityFirst (climb epics from the KEPT rares, sell the rest).
+    junkCreatureRarities: ['uncommon', 'rare'],
     junkCreatureStages: ['Baby', 'Juvenile', 'Adult', 'Elder'],
     junkCreatureVariants: ['normal', ''],
     // 2026-07-07 (owner: "рарные uncommon продавались по чуть завышеной цене, каждый трейт отдельно"): ALL

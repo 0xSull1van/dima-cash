@@ -100,6 +100,20 @@ test('planBreedPair: bottom-up — prefers LOWER min-rarity first (friend strate
   assert.equal(plan.estCostGold, 10000);
 });
 
+// 2026-07-07 (owner: эпики/леги растут медленно — bottom-up starved the scarce high tiers): flip to HIGH-first.
+test('planBreedPair: breedHighRarityFirst — prefers HIGHER min-rarity (climb epics/legs)', () => {
+  const plan = planBreedPair([
+    base({ id: 'u1', creature_id: 'unc1', rarity: 'Uncommon' }),
+    base({ id: 'u2', creature_id: 'unc1', rarity: 'Uncommon' }),
+    base({ id: 'r1', creature_id: 'rare1', rarity: 'Rare' }),
+    base({ id: 'r2', creature_id: 'rare1', rarity: 'Rare' }),
+    base({ id: 'e1', creature_id: 'ep1', rarity: 'Epic' }),
+    base({ id: 'e2', creature_id: 'ep1', rarity: 'Epic' }),
+  ], { breedHighRarityFirst: true }, NOW);
+  assert.equal(plan.species, 'ep1', 'epic pair bred first — the scarce high tier climbs, uncommons fill the rest of the tick');
+  assert.equal(plan.minRarity, 'epic');
+});
+
 test('planBreedPair: breedMinRarity excludes Common (Common = XP fodder, not bred)', () => {
   const roster = [
     base({ id: 'c1', creature_id: 'com', rarity: 'Common' }),

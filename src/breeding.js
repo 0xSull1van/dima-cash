@@ -136,6 +136,13 @@ export function describeBreedSkip(creatures = [], cfg = {}, now = Date.now()) {
 // duplicates (more pipeline volume), then name.
 export function planBreedPair(creatures = [], cfg = {}, now = Date.now()) {
   const busyIds = cfg.busyIds instanceof Set ? cfg.busyIds : new Set(cfg.busyIds || []);
+  // 2026-07-07 (owner: "почему епики и леги так долго прибавляются"): bottom-up (breed the LOWEST rarity
+  // first) meant the huge Uncommon pool ate every breed slot — 24h had 604 uncommon / 92 rare / ZERO epic
+  // breeds, so the 7 live epic pairs never climbed → 0 legendaries. breedHighRarityFirst flips the primary
+  // sort to HIGH-first: handleBreed's per-tick loop grabs the SCARCE rare/epic pairs first (few of them,
+  // cooldown-limited) and fills the remaining slots with Uncommons — so the ladder climbs without starving
+  // the base. Default off = the old bottom-up (back-compat); the farm profile turns it on.
+  const highFirst = cfg.breedHighRarityFirst === true;
   const byRarity = new Map();
   for (const c of creatures) {
     if (!c || busyIds.has(c.id)) continue;
@@ -191,7 +198,7 @@ export function planBreedPair(creatures = [], cfg = {}, now = Date.now()) {
     const speciesLabel = sA === sB ? sA : `${sA}/${sB}`; // cross-species pair — both names into the log/ledger
     const cand = { speciesLabel, pair, minRR, pairUnbound, size };
     const better = !best
-      || cand.minRR < best.minRR                                            // lower rarity — first (bottom-up, friend)
+      || (highFirst ? (cand.minRR > best.minRR) : (cand.minRR < best.minRR)) // high-first (climb epics/legs) OR low-first (bottom-up); guarded by !best short-circuit
       || (cand.minRR === best.minRR && cand.pairUnbound && !best.pairUnbound) // tie: unbound pair = sellable offspring
       || (cand.minRR === best.minRR && cand.pairUnbound === best.pairUnbound && cand.size > best.size) // tie: more duplicates
       || (cand.minRR === best.minRR && cand.pairUnbound === best.pairUnbound && cand.size === best.size && cand.speciesLabel < best.speciesLabel); // tie: name

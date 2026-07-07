@@ -52,7 +52,8 @@ test('farmTradingConfig enables seller-side trading while keeping human cadence'
   assert.equal(cfg.autoSellDuringScaling, true);            // тянем токены во время кача
   assert.equal(cfg.cashoutTargetZolana, 100_000);           // верхний стоп на кошелёк
   assert.ok(Array.isArray(cfg.fleetWallets));               // свои кошельки исключаются из floor
-  assert.deepEqual(cfg.junkCreatureRarities, ['uncommon']); // 2026-07-06: только Uncommon — рарки = сырьё epic-лестницы, Epic+ копим
+  assert.deepEqual(cfg.junkCreatureRarities, ['uncommon', 'rare']); // 2026-07-07: продаём излишек рарок тоже (keep-4/species остаётся брид-стоком)
+  assert.equal(cfg.breedHighRarityFirst, true); // 2026-07-07: брид сверху-вниз — растим эпики/леги (было bottom-up → 0 epic breeds/24h)
   assert.deepEqual(cfg.junkCreatureStages, ['Baby', 'Juvenile', 'Adult', 'Elder']);
   assert.equal(cfg.junkCreatureKeepPerSpecies, 0); // продаём всех, не держим
   assert.equal(cfg.autoBuyEggs, false); // 2026-07-06 (owner, ФИНАЛ): «надо фулл убрать, чтоб яйца не покупало» — выключено полностью, включая lux; рост только через брид
