@@ -44,6 +44,7 @@ import {
   getMarketFloorUsd,
   getCreatureFloorAndVolumeByRarity,
   creatureFloorUsdForRarity,
+  variantPremiumFloorUsd,
   creatureIdealPriceUsd,
   creatureAsksBySpecies,
   marketTraitsOf,
@@ -1466,6 +1467,11 @@ export class ZenkoBot {
       if (!ideal) return false;
       priceUsd = ideal.priceUsd;
       priceSource = ideal.source;
+      // Special-variant premium FLOOR (owner 2026-07-07 "шайни за ту же цену продался"): a Shiny/Golden/etc
+      // never lists at the plain-rarity price. Floor = normal-rarity floor × the variant multiplier; the
+      // market signal (Discord/floor) still wins when higher (epic golden $0.40). Reprice decays it if unsold.
+      const vFloor = variantPremiumFloorUsd(item?.rarity, item?.variant, this.creatureFloorZolana, this.priceUsd, this.cfg.variantPriceMult);
+      if (vFloor > priceUsd) { priceUsd = Math.round(vFloor * 100) / 100; priceSource = `${priceSource}+vfloor`; }
     } else if (itemKind === 'creature') {
       const plan = planOrganicPrice({
         floorUsd,

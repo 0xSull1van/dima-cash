@@ -381,6 +381,22 @@ export const CREATURE_VARIANT_PRICE_OVERRIDE_USD = {
   'uncommon:golden': 0.05,
 };
 
+// Default premium multipliers over the NORMAL rarity price for a special variant (owner 2026-07-07 "шайни за
+// ту же цену продался" — a Shiny/Golden/etc must not list at the plain price). Calibrated from real epic sales
+// (normal $0.09 → shiny $0.14-0.25 ≈ 2×, golden $0.40 ≈ 4×, shadow $0.20 ≈ 2×, rainbow the jackpot). Used as a
+// FLOOR: the price is max(market signal, rarity-floor × mult), so a real higher market median still wins.
+export const DEFAULT_VARIANT_PRICE_MULT = { shiny: 1.5, golden: 2.5, shadow: 2.5, rainbow: 4 };
+
+// The premium FLOOR (USD) a special variant must list at least at: normal-rarity floor × the variant multiplier.
+// 0 for a normal variant / no multiplier / no known rarity floor. Pure + tested.
+export function variantPremiumFloorUsd(rarity, variant, floorZolanaByRarity, zolanaPriceUsd, mult = DEFAULT_VARIANT_PRICE_MULT) {
+  if (!isSpecialVariant(variant)) return 0;
+  const m = Number((mult || {})[lower(variant)]) || 0;
+  if (!(m > 1)) return 0;
+  const base = creatureFloorUsdForRarity(rarity, floorZolanaByRarity, zolanaPriceUsd); // NORMAL rarity floor (variant-blind)
+  return base > 0 ? base * m : 0;
+}
+
 // Creature floor (USD) for listing, accounting for RARITY (and, if a variant is given, more precisely):
 // an explicit (rarity,variant) override wins over everything, otherwise the live floor (from
 // creatureFloorZolanaByRarity, real sales, ZOLANA → USD at the current token price), otherwise the manual

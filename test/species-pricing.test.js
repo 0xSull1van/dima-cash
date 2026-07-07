@@ -8,6 +8,7 @@ import {
   creatureAsksBySpecies,
   creatureIdealPriceUsd,
   creatureVariantFloorUsd,
+  variantPremiumFloorUsd,
 } from '../src/marketplace.js';
 
 test('marketTraitsOf extracts rarity/variant/species for the sales log (nested or flat, null when absent)', () => {
@@ -207,6 +208,16 @@ test('ideal price: Discord picks the most specific trait (species:variant), min-
 test('ideal price: no Discord data → falls through to the existing in-game logic', () => {
   const r = price({ species: 'x', rarity: 'uncommon', variant: 'normal', discordMedianUsd: {}, floorZolanaByRarity: {}, zolanaPriceUsd: null });
   assert.equal(r.source, 'seed', 'empty Discord → seed as before');
+});
+
+// 2026-07-07 (owner: "шайни за ту же цену продался"): a special variant floors ABOVE the normal-rarity price.
+test('variantPremiumFloorUsd: special variant ≥ normal-rarity floor × multiplier; normal → 0', () => {
+  const floorZ = { uncommon: 250 }; // × 0.0002 = $0.05 normal-uncommon floor
+  assert.ok(Math.abs(variantPremiumFloorUsd('uncommon', 'shiny', floorZ, 0.0002) - 0.075) < 1e-9, 'shiny = $0.05 × 1.5');
+  assert.equal(variantPremiumFloorUsd('uncommon', 'golden', floorZ, 0.0002), 0.125, 'golden × 2.5');
+  assert.equal(variantPremiumFloorUsd('uncommon', 'normal', floorZ, 0.0002), 0, 'normal variant → no premium floor');
+  assert.equal(variantPremiumFloorUsd('uncommon', 'shiny', {}, null), 0.045, 'no live floor → seed $0.03 × 1.5');
+  assert.ok(Math.abs(variantPremiumFloorUsd('uncommon', 'shiny', floorZ, 0.0002, { shiny: 3 }) - 0.15) < 1e-9, 'custom multiplier');
 });
 
 test('ideal price: never undercuts our own fleet ask (ladder against self-dump)', () => {
