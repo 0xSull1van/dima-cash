@@ -23,15 +23,18 @@ export function parseSaleMessage(m) {
   if (!fields.element) return null;                          // no Element ⇒ relic/item, not a creature — skip
   const rarity = lower(fields.rarity);
   if (!RARITY_KEYS.includes(rarity)) return null;
-  const pm = /\(\$([\d,]+(?:\.\d+)?)\)/.exec(String(fields.price || '')); // the "($0.10)" USD
+  const priceStr = String(fields.price || '');
+  const pm = /\(\$([\d,]+(?:\.\d+)?)\)/.exec(priceStr);           // "($0.10)" USD
   const priceUsd = pm ? Number(pm[1].replace(/,/g, '')) : null;
   if (!(priceUsd > 0)) return null;
+  const zm = /([\d,]+(?:\.\d+)?)\s*\$?zolana/i.exec(priceStr);     // "569 $ZOLANA" — the native amount (dashboard scatter)
+  const priceZol = zm ? Number(zm[1].replace(/,/g, '')) : null;
   // variant = leading title word if it's a known trait; the rest (minus it) is the species
   let name = sold[1].trim();
   let variant = 'normal';
   const vm = /^(\S+)\s+(.+)$/.exec(name);
   if (vm && VARIANTS.includes(lower(vm[1]))) { variant = lower(vm[1]); name = vm[2]; }
-  return { rarity, variant, species: lower(name), priceUsd, element: lower(fields.element) };
+  return { rarity, variant, species: lower(name), priceUsd, priceZol, element: lower(fields.element) };
 }
 
 const median = (arr) => { const a = [...arr].sort((x, y) => x - y); const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
@@ -50,9 +53,9 @@ export function discordTraitMedians(sales = []) {
     else add(`${s.rarity}:${v}`, s.priceUsd);
     if (s.species) add(`${s.rarity}:${v}:${s.species}`, s.priceUsd);
   }
-  const medianUsd = {}, counts = {};
-  for (const [k, arr] of Object.entries(buckets)) { medianUsd[k] = median(arr); counts[k] = arr.length; }
-  return { medianUsd, counts };
+  const medianUsd = {}, floorUsd = {}, counts = {};
+  for (const [k, arr] of Object.entries(buckets)) { medianUsd[k] = median(arr); floorUsd[k] = Math.min(...arr); counts[k] = arr.length; }
+  return { medianUsd, floorUsd, counts }; // median → pricing; floor (min) → the dashboard "floor" panel
 }
 
 // Look up the best (most specific) Discord median for a creature, given the medianUsd map from discordTraitMedians.

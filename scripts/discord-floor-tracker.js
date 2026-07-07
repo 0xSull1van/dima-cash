@@ -90,9 +90,11 @@ function writeFloor() {
   const cutoff = Date.now() - WINDOW_MS;
   while (sales.length && sales[0].ts < cutoff) sales.shift();
   const recent = sales.filter((s) => s.ts >= cutoff);
-  const { medianUsd, counts } = discordTraitMedians(recent); // per-trait median (rarity / rarity:variant / rarity:variant:species)
+  const { medianUsd, floorUsd, counts } = discordTraitMedians(recent); // per-trait median (pricing) + floor (dashboard)
+  // Individual sales for the dashboard SCATTER (1 point = 1 sale). Cap so the file stays small; keep the newest.
+  const scatter = recent.slice(-1000).map((s) => ({ ts: s.ts, rarity: s.rarity, variant: s.variant, species: s.species, priceUsd: s.priceUsd, priceZol: s.priceZol }));
   mkdirSync(dirname(OUT), { recursive: true });
-  writeFileSync(OUT, JSON.stringify({ updatedAt: new Date().toISOString(), source: 'discord', channel: CHANNEL, salesWindow: recent.length, medianUsd, counts }, null, 2));
+  writeFileSync(OUT, JSON.stringify({ updatedAt: new Date().toISOString(), source: 'discord', channel: CHANNEL, salesWindow: recent.length, medianUsd, floorUsd, counts, sales: scatter }, null, 2));
 }
 
 async function loop() {

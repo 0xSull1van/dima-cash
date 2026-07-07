@@ -5,19 +5,20 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { collectState } from '../scripts/serve-dashboard.js';
 
-// 2026-07-06 full dashboard rebuild (minimalist: KPI / floor candles / account cards / sales log).
-// The old asserts on runtime statuses and the "Market" card were replaced with equivalents for the new sections.
-test('web dashboard renders the four redesign sections with live data hooks', () => {
+// 2026-07-06 full dashboard rebuild (KPI / market chart / account cards / sales log).
+// 2026-07-07: the "candles" section became a SCATTER of real Discord sales (owner: 1 dot = 1 sale, colour by
+// rarity, + a compact per-trait floor panel). The candle-specific asserts were replaced with scatter equivalents.
+test('web dashboard renders the redesign sections with live data hooks', () => {
   const html = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 
   // KPI: NET from sales + the Jupiter rate (independent of the game) + pipeline
   assert.match(html, /Net from sales/);
   assert.match(html, /jupiterPriceUsd/);
   assert.match(html, /strategyFlows24h/);
-  // floor candles: rarity tabs + history request with a window
-  assert.match(html, /\/api\/market-history\?hours=/);
-  assert.match(html, /CandlestickSeries/);
-  assert.match(html, /no sales in window/);
+  // market sales scatter: real Discord sales (1 dot = 1 sale), rendered from /api/state.discord
+  assert.match(html, /Продажи на рынке/);
+  assert.match(html, /renderScatter/);
+  assert.match(html, /s\.discord\.sales/);
   // cards: account value via floor×haircut
   assert.match(html, /VALUE_HAIRCUT\s*=\s*0\.70/);
   assert.match(html, /creatureFloorZolana/);
@@ -26,14 +27,47 @@ test('web dashboard renders the four redesign sections with live data hooks', ()
   assert.match(html, /netZolana/);
 });
 
-test('web dashboard candles skip empty buckets and plot the median clearing price', () => {
+test('web dashboard scatter: one dot per sale coloured by rarity, log price, + per-trait floor panel', () => {
   const html = readFileSync(new URL('../public/dashboard.html', import.meta.url), 'utf8');
 
-  // the chart plots the stable median clearing price, falling back to the min-floor for old snapshots
-  assert.match(html, /clearingZolana\s*>\s*0\s*\?\s*r\.clearingZolana\s*:\s*r\.floorZolana/);
-  assert.match(html, /pointPrice\(f\)\s*>\s*0/); // empty/zero points excluded — no flat/zero candles
-  // USD conversion — via the nearest-in-time jupiter rate from prices
-  assert.match(html, /nearestPrice/);
+  // 1 point = 1 sale, filled with the rarity's colour var
+  assert.match(html, /cssVar\('--r-'\+q\.p\.rarity\)/);
+  // Y axis = price on a LOG scale (rarities span $0.01 … $3)
+  assert.match(html, /Math\.log10/);
+  // hover → per-sale tooltip (species / rarity / price)
+  assert.match(html, /function scatterHover/);
+  // compact floor panel: per rarity + special variant, from the Discord per-trait floors
+  assert.match(html, /function renderFloorPanel/);
+  assert.match(html, /discord\.floorUsd/);
+});
+
+test('collectState surfaces Discord sales + per-trait floors when the tracker file is present', () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'zenko-web-discord-'));
+  try {
+    writeFileSync(join(logDir, 'discord-floor.json'), JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      floorUsd: { rare: 0.1, 'epic:golden': 0.4 }, medianUsd: { rare: 0.1 }, counts: { rare: 12 },
+      sales: [{ ts: Date.now(), rarity: 'rare', variant: 'normal', species: 'florix', priceUsd: 0.1, priceZol: 570 }],
+    }), 'utf8');
+    const state = collectState({ logDir, registryPath: join(logDir, 'missing.json') });
+    assert.ok(state.discord, 'discord block present');
+    assert.equal(state.discord.floorUsd.rare, 0.1);
+    assert.equal(state.discord.floorUsd['epic:golden'], 0.4);
+    assert.equal(state.discord.sales.length, 1);
+    assert.equal(state.discord.sales[0].species, 'florix');
+  } finally { rmSync(logDir, { recursive: true, force: true }); }
+});
+
+test('collectState omits stale Discord data (tracker down)', () => {
+  const logDir = mkdtempSync(join(tmpdir(), 'zenko-web-discord-stale-'));
+  try {
+    writeFileSync(join(logDir, 'discord-floor.json'), JSON.stringify({
+      updatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(), // 1h old → beyond the 30-min freshness
+      floorUsd: { rare: 0.1 }, sales: [],
+    }), 'utf8');
+    const state = collectState({ logDir, registryPath: join(logDir, 'missing.json') });
+    assert.equal(state.discord, null, 'stale tracker output is dropped');
+  } finally { rmSync(logDir, { recursive: true, force: true }); }
 });
 
 test('web dashboard state includes account summary for frontend rendering', () => {

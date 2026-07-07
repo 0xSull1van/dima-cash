@@ -233,7 +233,16 @@ export function collectState({ logDir = LOG_DIR, registryPath = DEFAULT_REGISTRY
   const strategyFlows24h = summarizeStrategyFlows(allEvents, { now });
   const sales = summarizeSales(allEvents);
   const petGen = summarizePetGeneration(allEvents, { now }); // pets/hour + breeding by tier (last hour)
-  return { accounts, price, totalUsd, totalAnalytics, serverTime: now, jupiterPriceUsd, goldFloorUsd, strategyFlows24h, sales, petGen };
+  // Discord real-market data (2026-07-07): individual sales for the scatter + per-trait floors for the panel.
+  // Written by scripts/discord-floor-tracker.js; absent/stale is fine (the chart just shows nothing).
+  let discord = null;
+  try {
+    const raw = JSON.parse(readFileSync(join(logDir, 'discord-floor.json'), 'utf8'));
+    if (raw && (now - Date.parse(raw.updatedAt || 0)) < 30 * 60 * 1000) {
+      discord = { updatedAt: raw.updatedAt, floorUsd: raw.floorUsd || {}, medianUsd: raw.medianUsd || {}, counts: raw.counts || {}, sales: Array.isArray(raw.sales) ? raw.sales : [] };
+    }
+  } catch { /* no tracker running — chart shows empty */ }
+  return { accounts, price, totalUsd, totalAnalytics, serverTime: now, jupiterPriceUsd, goldFloorUsd, strategyFlows24h, sales, petGen, discord };
 }
 
 // Raw (un-bucketed) floor-by-rarity points + the Jupiter rate for the window — the frontend builds candles
