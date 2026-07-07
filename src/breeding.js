@@ -143,9 +143,14 @@ export function planBreedPair(creatures = [], cfg = {}, now = Date.now()) {
   // cooldown-limited) and fills the remaining slots with Uncommons — so the ladder climbs without starving
   // the base. Default off = the old bottom-up (back-compat); the farm profile turns it on.
   const highFirst = cfg.breedHighRarityFirst === true;
+  // "Passed" rarities: the next tier up is already full (owner 2026-07-07: "останавливаться бридить, когда
+  // фулл можем заполнить флот новой рарностью") — STOP breeding them (no need to make more of their
+  // offspring). Computed by the caller (ZenkoBot.passedRarities) over the whole roster; empty = breed all tiers.
+  const passed = cfg.passedRarities instanceof Set ? cfg.passedRarities : new Set(cfg.passedRarities || []);
   const byRarity = new Map();
   for (const c of creatures) {
     if (!c || busyIds.has(c.id)) continue;
+    if (passed.has(lower(c.rarity))) continue; // this tier's offspring is full — climb higher instead
     if (!isBreedEligible(c, cfg, now)) continue;
     const key = lower(c.rarity);
     if (!byRarity.has(key)) byRarity.set(key, []);

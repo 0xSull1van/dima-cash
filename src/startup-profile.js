@@ -40,6 +40,13 @@ export function farmTradingConfig(overrides = {}) {
     breedGoldReserve: 5000,              // Gold reserve for breeding: a bit above minGoldReserve so we don't drain to zero. The egg↔breed KNOB: higher → prioritize 50k eggs, lower → prioritize breeding (cheaper per rarity). Eggs are queue-capped (4), so breeding can lead.
     breedMinRarity: 'uncommon',          // friend's strategy: start at Uncommon (Common → XP fodder, don't breed).
     breedHighRarityFirst: true,          // 2026-07-07 (owner: эпики/леги растут медленно): breed SCARCE rare/epic pairs first, Uncommons fill the rest — 24h was 604/92/0 (unc/rare/epic) breeds, so epic pairs never climbed. Multi-breed loop + cooldowns keep the base breeding too.
+    // 2026-07-07 (owner: "останавливаться бридить когда фулл флот новой рарностью; что прошли/заменили —
+    // продавать"): per-rarity roster count (active + vault) that means "full of it". When an account hits
+    // the target for rarity R, the tier BELOW R is "passed" → we STOP breeding it AND SELL it all (see
+    // ZenkoBot.passedRarities / planBreedPair / pickJunkCreatures). Legendary/Mythical are never passed.
+    // ⚠️ TUNE THESE: set high on purpose so NOTHING is passed yet (per acct now ≈ 14 rare / 3 epic / 1.6 leg)
+    // — no premature selling of valuable pets. Lower a number to activate that step of the ladder.
+    rarityFullTarget: { rare: 40, epic: 40, legendary: 30 },
     breedAllowCrossSpecies: false,       // 2026-07-06 (friend): "one species, one rarity, one tier, for both" — strictly same-species, not just same-rarity. Matches the base default, fixed here as a deliberate decision.
     // Evolution caps at Adult except Legendary/Mythical (2026-07-06, friend: "don't push uncommon/rare/epic to
     // Elder — Elder just wastes Gold; only leggies are worth leveling to Elder; the rest stay Adult and breed

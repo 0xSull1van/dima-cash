@@ -753,17 +753,24 @@ export function pickJunkCreatures(creatures = [], cfg = {}) {
     }
   }
   const busyIds = cfg.busyIds instanceof Set ? cfg.busyIds : new Set(cfg.busyIds || []);
+  // "Passed" rarities: the next tier up is full, so we've climbed past this one → SELL IT ALL (owner
+  // 2026-07-07: "всё что мы уже прошли/заменили … можно продавать петта"). A passed rarity bypasses the
+  // allowed-rarity list, the surplus/8-8 gate, and the variant filter — but NOT the hard constraints
+  // (lux/bound/busy/placed/listed/favorite). Computed by ZenkoBot.passedRarities; empty = the normal rules only.
+  const passed = cfg.passedRarities instanceof Set ? cfg.passedRarities : new Set(cfg.passedRarities || []);
   const groups = new Map();
   for (const creature of creatures || []) {
+    const rar = lower(creature?.rarity);
+    const isPassed = passed.has(rar);
     // don't sell lux at all while in the accumulation phase (3 pets across the fleet) — it's strategic
     // ladder stock Gleamguard→Luminara→Solarknight, not merchandise. junkProtectLux:false returns it to sale.
     if (cfg.junkProtectLux !== false && isLuxCreature(creature)) continue;
-    if (!allowedRarities.has(lower(creature?.rarity))) continue;
+    if (!isPassed && !allowedRarities.has(rar)) continue;          // passed rarity is sellable even if not in junkCreatureRarities
     if (!allowedStages.has(lower(creature?.stage))) continue;
     const variantLower = lower(creature?.variant || 'normal');
-    const rarityVariantKey = `${lower(creature?.rarity)}:${variantLower}`;
-    if (!allowedVariants.has(variantLower) && !variantOverrides.has(rarityVariantKey)) continue;
-    if (minBreedCount > 0 && (Number(creature?.breed_count) || 0) < minBreedCount && !surplusOk.has(creature?.id)) continue;
+    const rarityVariantKey = `${rar}:${variantLower}`;
+    if (!isPassed && !allowedVariants.has(variantLower) && !variantOverrides.has(rarityVariantKey)) continue; // passed → sell all variants
+    if (!isPassed && minBreedCount > 0 && (Number(creature?.breed_count) || 0) < minBreedCount && !surplusOk.has(creature?.id)) continue; // passed → sell all, not just surplus/8-8
     if (busyIds.has(creature?.id) || isInRun(creature) || isFavoriteCreature(creature) || isListed(creature) || isBound(creature) || hasBusyStatus(creature) || isPlacedCreature(creature)) continue;
     const key = lower(creature?.species || creature?.creature_id || creature?.creatureId || 'unknown');
     if (!groups.has(key)) groups.set(key, []);

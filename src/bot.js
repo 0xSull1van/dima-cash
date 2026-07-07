@@ -153,6 +153,7 @@ export class ZenkoBot {
       breedMinRarity: 'common', // lower bound on breeding; the farm profile sets 'uncommon' (Common → XP fodder, don't breed)
       breedMaxRarity: 'epic',  // don't breed Legendary/Mythical (≈T4 end of the ladder / capped → server rejects)
       breedHighRarityFirst: false, // default bottom-up (friend's original); the farm profile flips it on to climb epics/legs
+      rarityFullTarget: {},        // {} = off (no tier is ever "passed"); the farm sets per-rarity "fleet full" counts (see passedRarities)
       breedAllowStored: true,  // vaulted (safe) pets CAN breed (2026-07-05) — zero opportunity cost, they don't run dungeons anyway. false → disable if the server ever rejects/something breaks
       breedAllowCrossSpecies: false, // 2026-07-06 (friend: "one species, one rarity, one tier, for both — if they differ it's −1 level"): by default do NOT breed different species of the same rarity, even if there's no same-species duplicate (a mismatch is tolerated by the server but gives a knowingly worse result). true → enable the cross-species fallback for volume at the cost of quality
       breedGoldReserve: null,  // Gold reserve for breeding (null → use minGoldReserve). The farm profile protects the egg budget
@@ -1337,9 +1338,27 @@ export class ZenkoBot {
     }
   }
 
+  // Rarities we've climbed PAST: the next tier up already has >= rarityFullTarget of it across the whole
+  // roster (active + vault). Owner 2026-07-07: "останавливаться бридить когда фулл флот новой рарностью; всё
+  // что прошли/заменили — продавать". Drives BOTH planBreedPair (stop breeding a passed tier) and
+  // pickJunkCreatures (sell it all). NEVER Legendary/Mythical — the top of the ladder is the goal, not stock.
+  // rarityFullTarget defaults are set HIGH (nothing is passed yet) — tune them down to activate per rarity.
+  passedRarities(state) {
+    const target = this.cfg.rarityFullTarget || {};
+    const up = { uncommon: 'rare', rare: 'epic', epic: 'legendary' };
+    const counts = {};
+    for (const c of this.allCreatures(state)) { const r = String(c?.rarity || '').toLowerCase(); if (r) counts[r] = (counts[r] || 0) + 1; }
+    const passed = new Set();
+    for (const [low, high] of Object.entries(up)) {
+      const t = Number(target[high]) || 0;
+      if (t > 0 && (counts[high] || 0) >= t) passed.add(low);
+    }
+    return passed;
+  }
+
   async tryListCreature(state, now = Date.now()) {
     if (!this.cfg.autoSellJunk || !this.cfg.autoSellJunkCreatures) return false;
-    const creature = pickJunkCreatures(state.creatures || [], { ...this.cfg, busyIds: this.busyIds(state) })[0];
+    const creature = pickJunkCreatures(state.creatures || [], { ...this.cfg, busyIds: this.busyIds(state), passedRarities: this.passedRarities(state) })[0];
     if (!creature) return false;
 
     const maxActive = Number(this.cfg.cashoutMaxActiveCreatureListings ?? this.cfg.cashoutMaxActiveListings);
@@ -1376,7 +1395,7 @@ export class ZenkoBot {
       if (relic && await this.listJunkItem('relic', relic, now)) return true;
     }
     if (this.cfg.autoSellJunkCreatures) {
-      const creature = pickJunkCreatures(state.creatures || [], { ...this.cfg, busyIds: this.busyIds(state) })[0];
+      const creature = pickJunkCreatures(state.creatures || [], { ...this.cfg, busyIds: this.busyIds(state), passedRarities: this.passedRarities(state) })[0];
       if (creature && await this.listJunkItem('creature', creature, now)) return true;
     }
     return false;
@@ -1522,6 +1541,7 @@ export class ZenkoBot {
     // to busyIds so planBreedPair finds the NEXT pair each time; gold and the incubator cap are recomputed
     // between pairs (we don't drop below the reserve in the loop).
     const busyIds = new Set(this.dungeonBusyIds(state));
+    const passed = this.passedRarities(state); // don't breed a tier whose next-up is already full (computed once for the loop)
     const maxPairs = Math.max(1, Number(this.cfg.breedMaxPerTick) || 1);
     let goldLeft = p.gold ?? 0;
     let bred = 0;
@@ -1530,7 +1550,7 @@ export class ZenkoBot {
       // allCreatures (not state.creatures!) — vaulted-for-breeding creatures live ONLY in
       // state.stored.creatures (see the comment on allCreatures()); without this planBreedPair could never
       // pick a vaulted one as a partner — the whole "breeding in the vault" bred nothing at all.
-      const plan = planBreedPair(this.allCreatures(state), { ...this.cfg, busyIds }, now);
+      const plan = planBreedPair(this.allCreatures(state), { ...this.cfg, busyIds, passedRarities: passed }, now);
       if (!plan) {
         // Diagnostics 2026-07-05: previously "no plan" was fully silent — during a live investigation
         // ("breeding silent for 4 hours") it was impossible to tell "no pair" from "a pair exists but

@@ -114,6 +114,19 @@ test('planBreedPair: breedHighRarityFirst — prefers HIGHER min-rarity (climb e
   assert.equal(plan.minRarity, 'epic');
 });
 
+// 2026-07-07 (owner: "останавливаться бридить когда фулл флот новой рарностью"): a "passed" rarity is skipped.
+test('planBreedPair: skips a PASSED rarity (its next tier is already full) → breeds the higher one', () => {
+  const roster = [
+    base({ id: 'u1', creature_id: 'unc1', rarity: 'Uncommon' }),
+    base({ id: 'u2', creature_id: 'unc1', rarity: 'Uncommon' }),
+    base({ id: 'r1', creature_id: 'rare1', rarity: 'Rare' }),
+    base({ id: 'r2', creature_id: 'rare1', rarity: 'Rare' }),
+  ];
+  // uncommon passed (enough rares) → even bottom-up, the uncommon pair is skipped, the rare pair is bred
+  const plan = planBreedPair(roster, { passedRarities: new Set(['uncommon']) }, NOW);
+  assert.equal(plan.minRarity, 'rare', 'uncommon skipped (passed) → rare bred instead');
+});
+
 test('planBreedPair: breedMinRarity excludes Common (Common = XP fodder, not bred)', () => {
   const roster = [
     base({ id: 'c1', creature_id: 'com', rarity: 'Common' }),
@@ -407,6 +420,23 @@ test('lux: pickJunkCreatures не продаёт lux даже выдохшего
   const spent = { id: 'lx', creature_id: 'gleamguard', species: 'gleamguard', rarity: 'Uncommon', stage: 'Adult', variant: 'Normal', breed_count: 8 };
   const out = pickJunkCreatures([spent], { junkCreatureRarities: ['uncommon'], junkCreatureStages: ['Adult'], junkMinBreedCount: 8, junkCreatureKeepPerSpecies: 0 });
   assert.equal(out.length, 0, 'lux не товар — стратегический сток');
+});
+
+// 2026-07-07 (owner: "всё что прошли/заменили — продавать петта"): a PASSED rarity sells IN FULL — bypasses
+// the allowed-rarity list, the surplus/8-8 gate, and the variant filter; hard constraints (bound) still hold.
+test('pickJunkCreatures: a PASSED rarity is sold in full (not just surplus/exhausted), bound still kept', () => {
+  const roster = [
+    { id: 'e1', species: 'thornmaw', rarity: 'Epic', stage: 'Adult', variant: 'Normal', breed_count: 0 },        // not exhausted, not in junkCreatureRarities → sold ONLY because epic is passed
+    { id: 'e2', species: 'thornmaw', rarity: 'Epic', stage: 'Adult', variant: 'Golden', breed_count: 0 },        // special variant → sold too (passed bypasses the variant filter)
+    { id: 'e3', species: 'thornmaw', rarity: 'Epic', stage: 'Adult', variant: 'Normal', breed_count: 0, bound: true }, // bound → hard skip
+  ];
+  const cfg = { junkCreatureRarities: ['uncommon'], junkCreatureStages: ['Adult'], junkMinBreedCount: 8, junkCreatureKeepPerSpecies: 0, passedRarities: new Set(['epic']) };
+  const out = pickJunkCreatures(roster, cfg).map(c => c.id).sort();
+  assert.deepEqual(out, ['e1', 'e2'], 'passed Epics sold (incl. special variant); bound Epic kept');
+
+  // NOT passed → the old gates hold: a non-exhausted Epic not in junkCreatureRarities isn't sold
+  const none = pickJunkCreatures(roster, { ...cfg, passedRarities: new Set() }).length;
+  assert.equal(none, 0, 'without "passed", Epics stay held');
 });
 
 // 2026-07-07 (owner: "рарные common, типо shadow — тоже конвертились"): recycleCommonVariantsToXp recycles
